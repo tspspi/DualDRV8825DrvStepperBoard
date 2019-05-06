@@ -1,0 +1,62 @@
+I2C Protocol for Stepper controller:
+
+	Command overview:
+
+		Group 0: General parameters (FIRST BYTE is ALWAYS THE STEPPER INDEX THAT SHOULD BE MODIFIED)
+
+			0x01		Get Acceleration & Deceleration (Allows to read 8 bytes; 2 IEEE floats in Little Endian; Acceleration first, then deceleration)
+			0x02		Set Acceleration & Deceleration (Expects 8 bytes as 2 IEEE float's in Little Endian; Acceleration first, then deceleration)
+			0x03		Get VMax (Allows to read 4 bytes as one IEEE float as VMax; Little Endian)
+			0x04		Set VMax (Expects 4 bytes as IEEE float as VMax; Little Endian)
+			0x05		Get alpha (step size in radians; 4 bytes for single IEEE float; Little endian)
+			0x06		Set alpha (step size in radians; 4 bytes for single IEEE float; Little endian)
+			0x07		Get Microstepping configuration; Normally shared
+						Full steps		0
+						1/2			1
+						1/4			2
+						1/8			3
+						1/16			4
+						1/32			5
+						1/64 (unsup)		6
+						1/128 (unsup)		7
+			0x08		Set Microstepping configuration (see above); Normally SHARED!
+			...
+			0x0E		Get FAULT bits (resets fault latch) - Returns a single bit with 1 bit per channel
+					Bit 0 corresponds to channel 0, Bit 1 to channel 1, etc.
+			0x0F		Execute recalculation of constants (after all parameters have been set)
+
+		Group 1: Command queue
+
+			0x10		Get available queue space (in entry numbers; max 255)
+
+		Group 2: Queue operation
+
+			0x20		Enqueue "sync point" on specified stepper (1 byte). Only if both steppers execute a
+					synchronization point the command queue advances. Allows to synchronize stepper operation.
+					Ex.: 0x20 0x00 or 0x20 0x01 for first or second stepper
+			0x21		Enqueue move constant speed. Expects Stepper index and direction in first byte; 
+					(Bit 7 is direction; Bits 0-6 are stepper index) then 4 bytes IEEE float that specifies
+					angular speed (rad / sec)
+					Will never finish; Need group 3 or F to leave
+			0x22		Move to (accelerated and decelerated; start and end stop)
+					Expects 1 byte stepper index and direction (Bit 7 is direction; Bits 0-6 are stepper
+					index) followed by 4 byte as one IEEE float that specifies the angular distance (radians)
+					that should be covered
+			0x23		Set constant speed with acceleration / deceleration; hold speed afterwards (no return)
+					Will never finish; Need group 3 or F to leave
+					Same as 0x21 but with acceleration ...
+			...
+			0x2E		Hold position (normally not required; Eventually required after "Disable driver" has
+					been used to re-enable the drivers; sufficient to execute on one for non-common control pins
+			0x2F		Enqueue "Disable driver" - has to be executed on BOTH drivers if common pin output
+					is used to be effective.
+
+		Group 3: Execute operation abort previous ones
+
+			0x3x		Same as above but discards ANY queued operation and executes the command immedately
+
+		Group F: Emergency commands
+
+			0xFE		Emergency stop (Stops all motors and KEEPS ENGAGED - motors will be "locked")
+			0xFF		Emergency off (Stops all motors and DISABLED DRIVERS - motors will "free wheel")
+
