@@ -190,7 +190,8 @@ ISR(TIMER2_COMPA_vect) {
 		either use to disable step pins or advance state machine depending on
 		out state. We have to finish in way less then 1024 ticks ...
 	*/
-	for(int stepperIdx = 0; stepperIdx < STEPPER_COUNT; stepperIdx = stepperIdx + 1) {
+	int stepperIdx;
+	for(stepperIdx = 0; stepperIdx < STEPPER_COUNT; stepperIdx = stepperIdx + 1) {
 		if(bResetRun) {
 			if(stepperIdx == 0) {
 				// Pulse PD2 low
@@ -334,7 +335,8 @@ static void stepperSetup() {
 	/*
 		Initialize stepper state machine to zero
 	*/
-	for(int i = 0; i < STEPPER_COUNT; i=i+1) {
+	int i;
+	for(i = 0; i < STEPPER_COUNT; i=i+1) {
 		state[i].cmdQueueHead = 0;
 		state[i].cmdQueueTail = 0;
 		state[i].counterCurrent = 0;
@@ -761,13 +763,51 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_ConstSpeed:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double constSpeed = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(constSpeed < 0) {
+					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 0);
+				} else {
+					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 1);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Queue_MoveTo:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_ConstSpeedAccel:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double stepAccelDecel = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(stepAccelDecel < 0) {
+					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 0);
+				} else {
+					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 1);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Queue_Hold:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
