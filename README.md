@@ -44,48 +44,44 @@ Additional features:
 ## Implementation status of I2C commands
 
 <table border="1">
-	<thead>
-		<tr>
-			<th> Command </th>
-			<th> Implemented </th>
-			<th> Tested </th>
-			<th> Description </th>
-		</tr>
-	</thead>
-	<tbody>
-		<td> <tr colspan="4"> Group 0: Configuration </tr> </td>
-		<td> <tr> i2cCmd_GetAccelerateDecelerate  	</tr> <tr> Y </tr> <tr> </tr> <tr> 8 byte payload Slave -> Master + 1 Byte Status </tr> </td>
-		<td> <tr> i2cCmd_SetAccelerateDecelerate  	</tr> <tr> Y </tr> <tr> </tr> <tr> 8 Byte payload Master -> Slave </tr> </td> </tr> </td>
-		<td> <tr> i2cCmd_GetVMax  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 byte payload Slave -> Master + 1 Byte Status </tr> </td> </tr> </td>
-		<td> <tr> i2cCmd_SetVMax  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Mater -> Slave </tr> </td>
-		<td> <tr> i2cCmd_GetAlpha  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Slave -> Master + 1 Byte Status </tr> </td>
-		<td> <tr> i2cCmd_SetAlpha  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Master -> Slave </tr> </td>
-		<td> <tr> i2cCmd_GetMicrostepping  			</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status </tr> </td>
-		<td> <tr> i2cCmd_SetMicrostepping  			</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Master -> Slave </tr> </td>
-		<td> <tr> i2cCmd_GetFault  					</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Master -> Slave (IS status) </tr> </td>
-		<td> <tr> i2cCmd_RecalculateConstants  		</tr> <tr> Y </tr> <tr> </tr> <tr> Used to trigger recalculation of all constants (expensive operation; system should be stopped) </tr> </td>
+	<tr>
+		<th> Command </th>
+		<th> Implemented </th>
+		<th> Tested </th>
+		<th> Description </th>
+	</tr>
+	<td> <tr colspan="4"> Group 0: Configuration </tr> </td>
+	<td> <tr> i2cCmd_GetAccelerateDecelerate  	</tr> <tr> Y </tr> <tr> </tr> <tr> 8 byte payload Slave -> Master + 1 Byte Status </tr> </td>
+	<td> <tr> i2cCmd_SetAccelerateDecelerate  	</tr> <tr> Y </tr> <tr> </tr> <tr> 8 Byte payload Master -> Slave </tr> </td> </tr> </td>
+	<td> <tr> i2cCmd_GetVMax  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 byte payload Slave -> Master + 1 Byte Status </tr> </td> </tr> </td>
+	<td> <tr> i2cCmd_SetVMax  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Mater -> Slave </tr> </td>
+	<td> <tr> i2cCmd_GetAlpha  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Slave -> Master + 1 Byte Status </tr> </td>
+	<td> <tr> i2cCmd_SetAlpha  					</tr> <tr> Y </tr> <tr> </tr> <tr> 4 Byte payload Master -> Slave </tr> </td>
+	<td> <tr> i2cCmd_GetMicrostepping  			</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status </tr> </td>
+	<td> <tr> i2cCmd_SetMicrostepping  			</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Master -> Slave </tr> </td>
+	<td> <tr> i2cCmd_GetFault  					</tr> <tr> </tr> <tr> </tr> <tr> 1 Byte payload Master -> Slave (IS status) </tr> </td>
+	<td> <tr> i2cCmd_RecalculateConstants  		</tr> <tr> Y </tr> <tr> </tr> <tr> Used to trigger recalculation of all constants (expensive operation; system should be stopped) </tr> </td>
 
-		<td> <tr colspan="4"> Group 1: Queue </tr> </td>
-		<td> <tr> i2cCmd_GetCommandQueueSize  		</tr> <tr> Y </tr> <tr> </tr> <tr> Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status </tr> </td>
+	<td> <tr colspan="4"> Group 1: Queue </tr> </td>
+	<td> <tr> i2cCmd_GetCommandQueueSize  		</tr> <tr> Y </tr> <tr> </tr> <tr> Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status </tr> </td>
 
-		<td> <tr colspan="4"> Group 2: Enqueue commands </tr> </td>
-		<td> <tr> i2cCmd_Queue_Sync  				</tr> <tr> </tr> <tr> </tr> <tr> Sync. point; 1 Byte Channel </tr> </td>
-		<td> <tr> i2cCmd_Queue_ConstSpeed  			</tr> <tr> </tr> <tr> </tr> <tr> Constant speed; 1 Byte Channel; 4 Byte Speed </tr> </td>
-		<td> <tr> i2cCmd_Queue_MoveTo  				</tr> <tr> </tr> <tr> </tr> <tr> Move To (accelerated); 1 Byte Channel; 4 Byte Position </tr> </td>
-		<td> <tr> i2cCmd_Queue_ConstSpeedAccel  	</tr> <tr> </tr> <tr> </tr> <tr> Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed </tr> </td>
-		<td> <tr> i2cCmd_Queue_Hold  				</tr> <tr> </tr> <tr> </tr> <tr> Hold position; 1 byte channel </tr> </td>
-		<td> <tr> i2cCmd_Queue_DisableDrv  			</tr> <tr> </tr> <tr> </tr> <tr> Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) </tr> </td>
+	<td> <tr colspan="4"> Group 2: Enqueue commands </tr> </td>
+	<td> <tr> i2cCmd_Queue_Sync  				</tr> <tr> </tr> <tr> </tr> <tr> Sync. point; 1 Byte Channel </tr> </td>
+	<td> <tr> i2cCmd_Queue_ConstSpeed  			</tr> <tr> </tr> <tr> </tr> <tr> Constant speed; 1 Byte Channel; 4 Byte Speed </tr> </td>
+	<td> <tr> i2cCmd_Queue_MoveTo  				</tr> <tr> </tr> <tr> </tr> <tr> Move To (accelerated); 1 Byte Channel; 4 Byte Position </tr> </td>
+	<td> <tr> i2cCmd_Queue_ConstSpeedAccel  	</tr> <tr> </tr> <tr> </tr> <tr> Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed </tr> </td>
+	<td> <tr> i2cCmd_Queue_Hold  				</tr> <tr> </tr> <tr> </tr> <tr> Hold position; 1 byte channel </tr> </td>
+	<td> <tr> i2cCmd_Queue_DisableDrv  			</tr> <tr> </tr> <tr> </tr> <tr> Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) </tr> </td>
 
-		<td> <tr colspan="4"> Group 3: Execute commands immedately </tr> </td>
-		<td> <tr> i2cCmd_Exec_Sync  				</tr> <tr> </tr> <tr> </tr> <tr> Sync. point; 1 Byte Channel </tr> </td>
-		<td> <tr> i2cCmd_Exec_ConstSpeed  			</tr> <tr> </tr> <tr> </tr> <tr> Constant speed; 1 Byte Channel; 4 Byte Speed </tr> </td>
-		<td> <tr> i2cCmd_Exec_MoveTo  				</tr> <tr> </tr> <tr> </tr> <tr> Move To (accelerated); 1 Byte Channel; 4 Byte Position </tr> </td>
-		<td> <tr> i2cCmd_Exec_ConstSpeedAccel  		</tr> <tr> </tr> <tr> </tr> <tr> Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed </tr> </td>
-		<td> <tr> i2cCmd_Exec_Hold  				</tr> <tr> </tr> <tr> </tr> <tr> Hold position; 1 byte channel </tr> </td>
-		<td> <tr> i2cCmd_Exec_DisableDrv  			</tr> <tr> </tr> <tr> </tr> <tr> Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) </tr> </td>
+	<td> <tr colspan="4"> Group 3: Execute commands immedately </tr> </td>
+	<td> <tr> i2cCmd_Exec_Sync  				</tr> <tr> </tr> <tr> </tr> <tr> Sync. point; 1 Byte Channel </tr> </td>
+	<td> <tr> i2cCmd_Exec_ConstSpeed  			</tr> <tr> </tr> <tr> </tr> <tr> Constant speed; 1 Byte Channel; 4 Byte Speed </tr> </td>
+	<td> <tr> i2cCmd_Exec_MoveTo  				</tr> <tr> </tr> <tr> </tr> <tr> Move To (accelerated); 1 Byte Channel; 4 Byte Position </tr> </td>
+	<td> <tr> i2cCmd_Exec_ConstSpeedAccel  		</tr> <tr> </tr> <tr> </tr> <tr> Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed </tr> </td>
+	<td> <tr> i2cCmd_Exec_Hold  				</tr> <tr> </tr> <tr> </tr> <tr> Hold position; 1 byte channel </tr> </td>
+	<td> <tr> i2cCmd_Exec_DisableDrv  			</tr> <tr> </tr> <tr> </tr> <tr> Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) </tr> </td>
 
-		<td> <tr colspan="4"> Group F: Emergency commands </tr> </td>
-		<td> <tr> i2cCmd_EmergencyStop  			</tr> <tr> </tr> <tr> </tr> <tr> Keeps motors engaged but stopped </tr> </td>
-		<td> <tr> i2cCmd_EmergencyOff  				</tr> <tr> </tr> <tr> </tr> <tr> Keeps motors disabled </tr> </td>
-	</tbody>
+	<td> <tr colspan="4"> Group F: Emergency commands </tr> </td>
+	<td> <tr> i2cCmd_EmergencyStop  			</tr> <tr> </tr> <tr> </tr> <tr> Keeps motors engaged but stopped </tr> </td>
+	<td> <tr> i2cCmd_EmergencyOff  				</tr> <tr> </tr> <tr> </tr> <tr> Keeps motors disabled </tr> </td>
 </table>
