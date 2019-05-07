@@ -60,8 +60,8 @@ Additional features:
 | i2cCmd_GetCommandQueueSize  		|  Y |  |  Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status |
 | Group 2: Enqueue commands |
 | i2cCmd_Queue_Sync  				|  |  |  Sync. point; 1 Byte Channel |
-| i2cCmd_Queue_ConstSpeed  			|  |  |  Constant speed; 1 Byte Channel; 4 Byte Speed |
-| i2cCmd_Queue_MoveTo  				|  |  |  Move To (accelerated); 1 Byte Channel; 4 Byte Position |
+| i2cCmd_Queue_ConstSpeed  			|  Y |  |  Constant speed; 1 Byte Channel; 4 Byte Speed |
+| i2cCmd_Queue_MoveTo  				|  Y |  |  Move To (accelerated); 1 Byte Channel; 4 Byte Position |
 | i2cCmd_Queue_ConstSpeedAccel  	|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed |
 | i2cCmd_Queue_Hold  				|  |  |  Hold position; 1 byte channel |
 | i2cCmd_Queue_DisableDrv  			|  |  |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) |
