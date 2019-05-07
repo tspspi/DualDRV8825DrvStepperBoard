@@ -1,9 +1,13 @@
-#ifndef ARDUINO
-	#include <avr/io.h>
-	#include <avr/interrupt.h>
-	#include <math.h>
-#endif
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <math.h>
+#include <avr/wdt.h>
+#include <util/twi.h>
 #include <stdint.h>
+
+#ifndef STEPPER_I2C_ADDRESS
+	#define STEPPER_I2C_ADDRESS 0x14
+#endif
 
 #ifndef __cplusplus
 	typedef int bool;
@@ -11,37 +15,6 @@
 	#define false 0
 #endif
 
-#ifdef ARDUINO
-	#define pinDir1     2
-	#define pinStep1    3
-	#define pinFault1   16
-
-	#define pinDir2     14
-	#define pinStep2    15
-	#define pinFault2   17
-
-	/*
-	    Shared pins
-	      Sleep:    Active low; Pullup to enable
-	      Reset:    Active low; Pullup to enable
-	      Mode:     0 1 2
-	                0 0 0   Full Step
-	                1 0 0   1/2
-	                0 1 0   1/4
-	                1 1 0   1/8
-	                0 0 1   1/16
-	                1 0 1   1/32
-	                0 1 1   1/32
-	                1 1 1   1/32
-	      Enable:   Active Low; Pull UP to disable
-	 */
-	#define pinSleep    4
-	#define pinReset    5
-	#define pinMode2    6
-	#define pinMode1    7
-	#define pinMode0    8
-	#define pinEnable   9
-#else
 /*
 	Pin usage:
 		pinDir1		2	PD2		OUT
@@ -98,7 +71,6 @@
 				DDRD = 0xFC;
 				PORTD = 0x00;
 */
-#endif
 
 /*
 	Master clock source will be TIMER2
@@ -129,16 +101,13 @@
 #define STEPPER_INITIAL_ACCELERATION	1 /* 6 */
 #define STEPPER_INITIAL_DECELERATION	-1 /* -6 */
 
-#ifndef ARDUINO
-	/*
-		We use our own systick implementation
-	*/
-	unsigned long int millis();
-	unsigned long int micros();
-	void delay(unsigned long millisecs);
-	void delayMicros(unsigned int microDelay);
-#endif
-
+/*
+	We use our own systick implementation
+*/
+unsigned long int millis();
+unsigned long int micros();
+void delay(unsigned long millisecs);
+void delayMicros(unsigned int microDelay);
 
 enum stepperCommandType {
 	stepperCommand_AccelerateStopToStop,
@@ -183,12 +152,6 @@ struct stepperState {
 	unsigned int			cmdQueueHead;
 	unsigned int			cmdQueueTail;
 
-	#ifdef ARDUINO
-		int						pinStep;
-		int						pinDir;
-		int						pinFault;
-	#endif
-
 	/* Cache for precalculated constants - see documentation */
 	struct {
 		double				c1;
@@ -212,15 +175,12 @@ struct stepperState {
 	} settings;
 };
 
-
-
 #define STEPPER_COUNT 2
 
 /*
 	Declare state for both steppers
 */
 volatile static struct stepperState			state[STEPPER_COUNT];
-
 
 bool bResetRun = false;
 
@@ -232,17 +192,13 @@ ISR(TIMER2_COMPA_vect) {
 	*/
 	for(int stepperIdx = 0; stepperIdx < STEPPER_COUNT; stepperIdx = stepperIdx + 1) {
 		if(bResetRun) {
-			#ifndef ARDUINO
-				if(stepperIdx == 0) {
-					// Pulse PD2 low
-					PORTD = PORTD & (~0x08);
-				} else {
-					// Pulse PC1 low
-					PORTC = PORTC & (~0x02);
-				}
-			#else
-				digitalWrite(state[stepperIdx].pinStep, LOW);
-			#endif
+			if(stepperIdx == 0) {
+				// Pulse PD2 low
+				PORTD = PORTD & (~0x08);
+			} else {
+				// Pulse PC1 low
+				PORTC = PORTC & (~0x02);
+			}
 		} else {
 			if(state[stepperIdx].cmdQueueTail == state[stepperIdx].cmdQueueHead) {
 				/* Nothing to do ... */
@@ -252,25 +208,21 @@ ISR(TIMER2_COMPA_vect) {
 			const int qIdx = state[stepperIdx].cmdQueueTail;
 			if(state[stepperIdx].c_i == -1) {
 				/* We wake up from idle ... any may have to do some initialization */
-				#ifdef ARDUINO
-					digitalWrite(state[stepperIdx].pinDir, (state[stepperIdx].cmdQueue[qIdx].forward != 0) ? HIGH : LOW);
-				#else
-					if(stepperIdx == 0) {
-						// PD2
-						if(state[stepperIdx].cmdQueue[qIdx].forward != 0) {
-							PORTD = PORTD | 0x04;
-						} else {
-							PORTD = PORTD & (~0x04);
-						}
+				if(stepperIdx == 0) {
+					// PD2
+					if(state[stepperIdx].cmdQueue[qIdx].forward != 0) {
+						PORTD = PORTD | 0x04;
 					} else {
-						// PC0
-						if(state[stepperIdx].cmdQueue[qIdx].forward != 0) {
-							PORTC = PORTC | 0x01;
-						} else {
-							PORTC = PORTC & (~0x01);
-						}
+						PORTD = PORTD & (~0x04);
 					}
-				#endif
+				} else {
+					// PC0
+					if(state[stepperIdx].cmdQueue[qIdx].forward != 0) {
+						PORTC = PORTC | 0x01;
+					} else {
+						PORTC = PORTC & (~0x01);
+					}
+				}
 
 				if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_AccelerateStopToStop) {
 					state[stepperIdx].c_i = state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.initialDelayTicks;
@@ -316,9 +268,6 @@ ISR(TIMER2_COMPA_vect) {
 				state[stepperIdx].counterCurrent = state[stepperIdx].c_i; // Counter reload ...
 			}
 
-			#ifdef ARDUINO
-				digitalWrite(state[stepperIdx].pinStep, HIGH);
-			#else
 			if(stepperIdx == 0) {
 				// Pulse PD2 high
 				PORTD = PORTD | 0x08;
@@ -326,7 +275,6 @@ ISR(TIMER2_COMPA_vect) {
 				// Pulse PC1 high
 				PORTC = PORTC | 0x02;
 			}
-			#endif
 		}
 	}
 
@@ -364,61 +312,24 @@ static void stepperSetup() {
 	sei();
 
 	/*
-		Initialize pins and initial 1/4 microstepping
+		Initialize pins with usage as described above
+		Pull enable HIGH (inputs disabled), RESET and SLEEP low (ENABLED)
+		Microstepping initally set to full step
 	*/
-	#ifdef ARDUINO
-		state[0].pinDir = pinDir1;
-		state[0].pinStep = pinStep1;
-		state[0].pinFault = pinFault1;
+	DDRB = 0x03;
+	PORTB = 0x02;
+	DDRC = 0x03;
+	PORTC = 0x00;
+	DDRD = 0xFC;
+	PORTD = 0x00;
 
-		state[1].pinDir = pinDir2;
-		state[1].pinStep = pinStep2;
-		state[1].pinFault = pinFault2;
-	#endif
-
-	#ifdef ARDUINO
-		pinMode(pinDir1, OUTPUT);   digitalWrite(pinDir1, 0);
-		pinMode(pinStep1, OUTPUT);  digitalWrite(pinStep1, 0);
-		pinMode(pinDir2, OUTPUT);   digitalWrite(pinDir2, 0);
-		pinMode(pinStep2, OUTPUT);  digitalWrite(pinStep2, 0);
-
-		pinMode(pinFault1, INPUT);
-		pinMode(pinFault2, INPUT);
-
-		pinMode(pinSleep, OUTPUT);  digitalWrite(pinSleep, 0); // Enter sleep mode
-		pinMode(pinReset, OUTPUT);  digitalWrite(pinReset, 0); // Enter RESET mode
-		pinMode(pinEnable, OUTPUT); digitalWrite(pinEnable, 1); // DISABLE device inputs
-		pinMode(pinMode2, OUTPUT);  digitalWrite(pinMode0, 0);
-		pinMode(pinMode1, OUTPUT);  digitalWrite(pinMode1, 0);
-		pinMode(pinMode0, OUTPUT);  digitalWrite(pinMode2, 0); // Default: Full step mode
-
-		delay(10);
-
-		digitalWrite(pinSleep, 1);  // Leave sleep state
-		delay(2);
-		digitalWrite(pinEnable, 0); // Enable inputs
-		delay(150);
-		delay(5);
-		// Now we reset the devices
-		digitalWrite(pinReset, 0);  // Enter reset mode
-		delay(150);
-		digitalWrite(pinReset, 1);  // Leave reset mode
-		delay(150);
-	#else
-		DDRB = 0x03;
-		PORTB = 0x02;
-		DDRC = 0x03;
-		PORTC = 0x00;
-		DDRD = 0xFC;
-		PORTD = 0x00;
-
-		delay(10);
-		PORTD = PORTD | 0x10; /* Leave sleep state */
-		delay(2);
-		PORTB = PORTB & (~0x02); /* Enable inputs */
-		delay(150);
-		PORTD = PORTD | 0x20; /* Leave reset mode */
-	#endif
+	delay(10);
+	PORTD = PORTD | 0x10; /* Leave sleep state by pulling SLEEP HIGH (disabled) */
+	delay(2);
+	PORTB = PORTB & (~0x02); /* Enable inputs by pulling ENABLE LOW (enabled) */
+	delay(150);
+	PORTD = PORTD | 0x20; /* Leave reset mode by pulling RESET HIGH (disabled) */
+	delay(150);
 
 	/*
 		Initialize stepper state machine to zero
@@ -503,196 +414,586 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 
 	state[stepperIndex].cmdQueue[idx].forward = direction;
 
-	/*
-		Serial.print("Planned accelerated move to, acceleration steps ");
-		Serial.print(state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA);
-		Serial.print(", deceleration steps ");
-		Serial.print(state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nC);
-		Serial.print(", constant steps ");
-		Serial.println(state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD);
-		delay(1000);
-	*/
-
 	state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
 	return;
 }
 
 
-#ifndef ARDUINO
-	/*
-		System tick timer
-	*/
+/*
+	==============================
+	= I2C communiation subsystem =
+	==============================
+*/
 
-	#define SYSCLK_TIMER_OVERFLOW_MICROS	(64L * 256L * (F_CPU / 1000000L))
-	#define SYSCLK_MILLI_INCREMENT			(SYSCLK_TIMER_OVERFLOW_MICROS / 1000)
-	#define SYSCLK_MILLIFRACT_INCREMENT		((SYSCLK_TIMER_OVERFLOW_MICROS % 1000) >> 3)
-	#define SYSCLK_MILLIFRACT_MAXIMUM		(1000 >> 3)
+enum i2cCommand {
+	i2cCmd_GetAccelerateDecelerate		= 0x01,	/* 8 byte payload Slave -> Master + 1 Byte Status */
+	i2cCmd_SetAccelerateDecelerate		= 0x02,	/* 8 Byte payload Master -> Slave */
+	i2cCmd_GetVMax						= 0x03, /* 4 byte payload Slave -> Master + 1 Byte Status */
+	i2cCmd_SetVMax						= 0x04,	/* 4 Byte payload Mater -> Slave */
+	i2cCmd_GetAlpha						= 0x05,	/* 4 Byte payload Slave -> Master + 1 Byte Status */
+	i2cCmd_SetAlpha						= 0x06,	/* 4 Byte payload Master -> Slave */
+	i2cCmd_GetMicrostepping				= 0x07, /* 1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status */
+	i2cCmd_SetMicrostepping				= 0x08, /* 1 Byte payload Master -> Slave */
 
-	volatile unsigned long int systemMillis					= 0;
-	volatile unsigned long int systemMilliFractional		= 0;
-	volatile unsigned long int systemMonotonicOverflowCnt	= 0;
+	i2cCmd_GetFault						= 0x0E, /* 1 Byte payload Master -> Slave (IS status) */
+	i2cCmd_RecalculateConstants			= 0x0F, /* Used to trigger recalculation of all constants (expensive operation; system should be stopped) */
 
-	ISR(TIMER0_OVF_vect) {
-		unsigned long int m, f;
 
-		m = systemMillis;
-		f = systemMilliFractional;
 
-		m = m + SYSCLK_MILLI_INCREMENT;
-		f = f + SYSCLK_MILLIFRACT_INCREMENT;
+	i2cCmd_GetCommandQueueSize			= 0x10,	/* Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status */
 
-		if(f >= SYSCLK_MILLIFRACT_MAXIMUM) {
-			f = f - SYSCLK_MILLIFRACT_MAXIMUM;
-			m = m + 1;
-		}
 
-		systemMonotonicOverflowCnt = systemMonotonicOverflowCnt + 1;
 
-		systemMillis = m;
-		systemMilliFractional = f;
-	}
+	i2cCmd_Queue_Sync					= 0x20,	/* Sync. point; 1 Byte Channel */
+	i2cCmd_Queue_ConstSpeed				= 0x21,	/* Constant speed; 1 Byte Channel; 4 Byte Speed */
+	i2cCmd_Queue_MoveTo					= 0x22,	/* Move To (accelerated); 1 Byte Channel; 4 Byte Position */
+	i2cCmd_Queue_ConstSpeedAccel		= 0x23,	/* Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed */
+	i2cCmd_Queue_Hold					= 0x2E,	/* Hold position; 1 byte channel */
+	i2cCmd_Queue_DisableDrv				= 0x2F,	/* Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) */
 
-	/*
-		Millis function used to calculate time delays
-	*/
-	unsigned long int millis() {
-		unsigned long int m;
+	i2cCmd_Exec_Sync					= 0x30,	/* Sync. point; 1 Byte Channel */
+	i2cCmd_Exec_ConstSpeed				= 0x31,	/* Constant speed; 1 Byte Channel; 4 Byte Speed */
+	i2cCmd_Exec_MoveTo					= 0x32,	/* Move To (accelerated); 1 Byte Channel; 4 Byte Position */
+	i2cCmd_Exec_ConstSpeedAccel			= 0x33,	/* Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed */
+	i2cCmd_Exec_Hold					= 0x3E,	/* Hold position; 1 byte channel */
+	i2cCmd_Exec_DisableDrv				= 0x3F,	/* Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) */
 
-		/*
-			Note that this is a hack.
-			systemMillis is a multi-byte value so we disable interrupts to read
-			consistently BUT this is implementation dependent on the compiler
-		*/
-		uint8_t srOld = SREG;
-		cli();
-		m = systemMillis;
-		SREG = srOld;
+	i2cCmd_EmergencyStop				= 0xFE,	/* Keeps motors engaged but stopped */
+	i2cCmd_EmergencyOff					= 0xFF, /* Keeps motors disabled */
+};
 
-		return m;
-	}
+#ifndef STEPPER_I2C_BUFFERSIZE_RX
+	#define STEPPER_I2C_BUFFERSIZE_RX	32
+#endif
+#ifndef STEPPER_I2C_BUFFERSIZE_TX
+	#define STEPPER_I2C_BUFFERSIZE_TX	32
+#endif
 
-	unsigned long int micros() {
-		uint8_t srOld = SREG;
-		unsigned long int overflowCounter;
-		unsigned long int timerCounter;
+static uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
+static int i2cBuffer_RX_Head = 0;
+static int i2cBuffer_RX_Tail = 0;
 
-		cli();
-		overflowCounter = systemMonotonicOverflowCnt;
-		timerCounter = TCNT0;
+static uint8_t i2cBuffer_TX[STEPPER_I2C_BUFFERSIZE_TX];
+static int i2cBuffer_TX_Head = 0;
+static int i2cBuffer_TX_Tail = 0;
 
-		/*
-			Check for pending overflow that has NOT been handeled up to now
-		*/
-		if(((TIFR0 & 0x01) != 0) && (timerCounter < 255)) {
-			overflowCounter = overflowCounter + 1;
-		}
-
-		SREG = srOld;
-
-		return ((overflowCounter << 8) + timerCounter) * (64L / (F_CPU / 1000000L));
-	}
-
-	void delay(unsigned long millisecs) {
-		uint16_t lastMicro;
-		/*
-			Busy waiting the desired amount of milliseconds ... by
-			polling mircos
-		*/
-		lastMicro = (uint16_t)micros();
-		while(millisecs > 0) {
-			if(((uint16_t)micros() - lastMicro) >= 1000) {
-				/* Every ~ thousand microseconds tick ... */
-				lastMicro = lastMicro + 1000;
-				millisecs = millisecs - 1;
-			}
-		}
+/*
+	The receive and transmit handlers only enqueue
+	the data into the receive queue or transmit from
+	the TX queue to minimize jitter for TIMER2. The
+	messages are handeled from the main loop which is
+	always interruptable by the interrupt handlers.
+*/
+static inline void i2cEventReceived(uint8_t data) {
+	// Do whatever we want with the received data
+	if(((i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX) == i2cBuffer_RX_Tail) {
+		// Buffer overflow ... ToDo
 		return;
 	}
-	void delayMicros(unsigned int microDelay) {
-		#if F_CPU == 20000000L
+	i2cBuffer_RX[i2cBuffer_RX_Head] = data;
+	i2cBuffer_RX_Head = (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+}
+static inline void i2cEventBusError() {
+	// Ignore. ToDo
+	return;
+}
+static inline uint8_t i2cEventTransmit() {
+	if(i2cBuffer_TX_Head == i2cBuffer_TX_Tail) {
+		/* Empty buffer - buffer underrun ... ToDo */
+		return 0x00;
+	} else {
+		uint8_t r = i2cBuffer_TX[i2cBuffer_TX_Tail];
+		i2cBuffer_TX_Tail = (i2cBuffer_TX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_TX;
+		return r;
+	}
+}
+
+static void i2cSlaveInit(uint8_t address) {
+	cli();
+
+	TWAR = (address << 1) | 0x01; // Respond to general calls and calls towards us
+	TWCR = 0xC5; // Set TWIE (TWI Interrupt enable), TWEN (TWI Enable), TWEA (TWI Enable Acknowledgement), TWINT (Clear TWINT flag by writing a 1)
+
+	sei();
+	return;
+}
+
+ISR(TWI_vect) {
+	switch(TW_STATUS) { /* Note: TW_STATUS is an macro that masks status bits from TWSR) */
+		case TW_SR_SLA_ACK:
+		case TW_SR_DATA_ACK:
 			/*
-				Burn two additional cycles - together with function
-				calling overhead of avr-gcc and the subtraction below
-				this should lead to 1 us delay (see assembly output!)
+				We have received data. This is now contained in the TWI
+				data register (TWDR)
 			*/
-			__asm__ __volatile__ (
-				"nop\n"
-				"nop\n"
-			);
-			if((microDelay = microDelay - 1) == 0) {
-				return;
+			i2cEventReceived(TWDR);
+			break;
+		case TW_ST_SLA_ACK:
+		case TW_ST_DATA_ACK:
+			/*
+				Either slave selected (SLA_ACK) and data requested or data transmitted, ACK received
+				and next data requested
+			*/
+			TWDR = i2cEventTransmit();
+			break;
+		case TW_BUS_ERROR:
+			i2cEventBusError();
+			break;
+		default:
+			break;
+	}
+	TWCR = 0xC5; // Set TWIE (TWI Interrupt enable), TWEN (TWI Enable), TWEA (TWI Enable Acknowledgement), TWINT (Clear TWINT flag by writing a 1)
+}
+
+static inline void i2cTXDouble(double f) {
+	/*
+		Note this is REALLY a hackish and unclean
+		way to do ... this is NOT standards conformant
+		C since C does not really require IEEE floating
+		point values. One SHOULD do a real serialization
+		instead but that would take WAY more cycles
+	*/
+	union {
+		double f;
+		uint8_t b[4];
+	} d;
+
+	d.f = f;
+	i2cBuffer_TX[i2cBuffer_TX_Head] = d.b[0];
+	i2cBuffer_TX[(i2cBuffer_TX_Head+1) % STEPPER_I2C_BUFFERSIZE_TX] = d.b[1];
+	i2cBuffer_TX[(i2cBuffer_TX_Head+2) % STEPPER_I2C_BUFFERSIZE_TX] = d.b[2];
+	i2cBuffer_TX[(i2cBuffer_TX_Head+3) % STEPPER_I2C_BUFFERSIZE_TX] = d.b[3];
+	i2cBuffer_TX_Head = (i2cBuffer_TX_Head+4) % STEPPER_I2C_BUFFERSIZE_TX;
+	return;
+}
+
+static inline double i2cRXDouble() {
+	/*
+		Note this is REALLY a hackish and unclean
+		way to do ... this is NOT standards conformant
+		C since C does not really require IEEE floating
+		point values. One SHOULD do a real deserialization
+		instead but that would take WAY more cycles
+	*/
+	union {
+		double f;
+		uint8_t b[4];
+	} d;
+
+	d.b[0] = i2cBuffer_RX[i2cBuffer_RX_Tail];
+	i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+	d.b[1] = i2cBuffer_RX[i2cBuffer_RX_Tail];
+	i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+	d.b[2] = i2cBuffer_RX[i2cBuffer_RX_Tail];
+	i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+	d.b[3] = i2cBuffer_RX[i2cBuffer_RX_Tail];
+	i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+
+	return d.f;
+}
+
+static void i2cMessageLoop() {
+	uint8_t cmd = i2cBuffer_RX[i2cBuffer_RX_Tail];
+	uint8_t rcvBytes = (i2cBuffer_RX_Tail >= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Tail - i2cBuffer_RX_Head) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
+	if(rcvBytes == 0) {
+		return; /* Nothing received */
+	}
+	uint8_t txAvail = STEPPER_I2C_BUFFERSIZE_TX - ((i2cBuffer_TX_Tail >= i2cBuffer_TX_Head) ? (i2cBuffer_TX_Tail - i2cBuffer_TX_Head) : (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail + i2cBuffer_TX_Head));
+	/*
+		We use a switch statement here. Would a jump table
+		be possible and more efficient?
+	*/
+	switch(cmd) {
+		case i2cCmd_GetAccelerateDecelerate:
+			{
+				/*
+					Two byte command that allows reading of 8 bytes representing
+					currently configured acceleration and deceleration on the
+					selected channel
+				*/
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				if(txAvail < 8) {
+					/* Command is NOT satisfyable. Just skip ... */
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					return;
+				}
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				double a = (channel < 2) ? state[channel].settings.acceleration : 0.0;
+				double d = (channel < 2) ? state[channel].settings.deceleration : 0.0;
+
+				/* Encode IEEE float to 4 byte sequence in little endian */
+				i2cTXDouble(a);
+				i2cTXDouble(d);
+
+				/* Done */
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			}
+			break;
+		case i2cCmd_SetAccelerateDecelerate:
+			{
+				if(rcvBytes < 2+4+4) {
+					return; /* Command not fully received */
+				}
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double a = i2cRXDouble();
+				double d = i2cRXDouble();
 
-			/*
-				Multiply by 5 - loop below takes 4 cycles.
-				One cycle takes 1/20000000 seconds i.e. 5e-8 s i.e. 0.05 us.
-				One loop iteration burns 4 cycles i.e. 0.2 us
-				So we require 5 loop iterations per loop to reach 1 us
-			*/
-			microDelay = (microDelay << 2) + microDelay;
-		#elif F_CPU == 16000000L
-			/*
-				Function calling, subtraction and conditional
-				branch should be equal to approx. 1us (see assembly
-				output to fine-tune).
-			*/
-			if((microDelay = microDelay - 1) == 0) {
-				return;
+				if(channel < 2) {
+					state[channel].settings.acceleration = a;
+					state[channel].settings.deceleration = d;
+				}
+				/* Done */
 			}
+			break;
+		case i2cCmd_GetVMax:
+			{
+				/*
+					Two byte command that allows reading of 4 bytes representing currently configured
+					maximum speed of selected channel
+				*/
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				if(txAvail < 4) {
+					/* Command is NOT satisfyable. Just skip ... */
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					return;
+				}
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				double vmax = (channel < 2) ? state[channel].settings.vmax : -1.0;
 
-			/*
-				Each cycle takes 1/16000000 seconds i.e. 6.25e-8 s i.e. 0.0625 us.
-				One loop iteration burns 4 cycles i.e. 0.25 us
-				So we require 4 loop iterations to reach 1 us
+				/* Encode IEEE float to 4 byte sequence in little endian */
+				i2cTXDouble(vmax);
 
-				This calculation takes us approx. 0.5 us (see assembly
-				output to fine tune)
-			*/
-			microDelay = (microDelay << 2) - 2;
-		#elif F_CPU == 8000000L
-			if((microDelay = microDelay - 1) == 0) {
-				return;
+				/* Done */
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			}
-			if((microDelay = microDelay - 1) == 0) {
-				return;
+			break;
+		case i2cCmd_SetVMax:
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double vmax = i2cRXDouble();
+
+				if(channel < 2) {
+					state[channel].settings.vmax = vmax;
+				}
+				/* Done */
 			}
+			break;
+		case i2cCmd_GetAlpha:
+			{
+				/*
+					Two byte command that allows reading of 4 bytes representing currently configured
+					alpha value of selected channel
+				*/
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				if(txAvail < 4) {
+					/* Command is NOT satisfyable. Just skip ... */
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					return;
+				}
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				double alpha = (channel < 2) ? state[channel].settings.alpha : -1.0;
 
+				/* Encode IEEE float to 4 byte sequence in little endian */
+				i2cTXDouble(alpha);
+
+				/* Done */
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			}
+			break;
+		case i2cCmd_SetAlpha:
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double alpha = i2cRXDouble();
+
+				if(channel < 2) {
+					state[channel].settings.alpha = alpha;
+				}
+				/* Done */
+			}
+			break;
+		case i2cCmd_GetMicrostepping:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_SetMicrostepping:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_GetFault:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_RecalculateConstants:
+			{
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				updateConstants(channel);
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			}
+			break;
+		case i2cCmd_GetCommandQueueSize:
+			{
+				if(txAvail == 0) {
+					/* Overflow in TX buffer ... ToDo. Currently we skip the command WITHOUT any response */
+				} else {
+					i2cBuffer_TX[i2cBuffer_TX_Head] = STEPPER_COMMANDQUEUELENGTH;
+					i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			}
+			break;
+
+		case i2cCmd_Queue_Sync:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Queue_ConstSpeed:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Queue_MoveTo:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Queue_ConstSpeedAccel:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Queue_Hold:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Queue_DisableDrv:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+
+		case i2cCmd_Exec_Sync:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Exec_ConstSpeed:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Exec_MoveTo:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Exec_ConstSpeedAccel:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Exec_Hold:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_Exec_DisableDrv:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+
+		case i2cCmd_EmergencyStop:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+		case i2cCmd_EmergencyOff:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			break;
+
+		default:
 			/*
-				Each loop iteration burns 0.5us,
-				the calculation takes approx 0.5us
-				(see assembly output to fine-tune again)
+				Unknown command. Simply ignore this byte. This allows
+				the master to re-synchronize by delaying some arbitrary
+				time and __slowly__ sending a sequence of zeros
 			*/
-			microDelay = (microDelay << 1) - 1;
-		#else
-			#error No known delay loop calibration available for this F_CPU
-		#endif
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+			break;
+	}
+}
 
+/*
+	================================================
+	= Main initialization and systick utility code =
+	================================================
+*/
+
+/*
+	System tick timer
+*/
+
+#define SYSCLK_TIMER_OVERFLOW_MICROS	(64L * 256L * (F_CPU / 1000000L))
+#define SYSCLK_MILLI_INCREMENT			(SYSCLK_TIMER_OVERFLOW_MICROS / 1000)
+#define SYSCLK_MILLIFRACT_INCREMENT		((SYSCLK_TIMER_OVERFLOW_MICROS % 1000) >> 3)
+#define SYSCLK_MILLIFRACT_MAXIMUM		(1000 >> 3)
+
+volatile unsigned long int systemMillis					= 0;
+volatile unsigned long int systemMilliFractional		= 0;
+volatile unsigned long int systemMonotonicOverflowCnt	= 0;
+
+ISR(TIMER0_OVF_vect) {
+	unsigned long int m, f;
+
+	m = systemMillis;
+	f = systemMilliFractional;
+
+	m = m + SYSCLK_MILLI_INCREMENT;
+	f = f + SYSCLK_MILLIFRACT_INCREMENT;
+
+	if(f >= SYSCLK_MILLIFRACT_MAXIMUM) {
+		f = f - SYSCLK_MILLIFRACT_MAXIMUM;
+		m = m + 1;
+	}
+
+	systemMonotonicOverflowCnt = systemMonotonicOverflowCnt + 1;
+
+	systemMillis = m;
+	systemMilliFractional = f;
+}
+
+/*
+	Millis function used to calculate time delays
+*/
+unsigned long int millis() {
+	unsigned long int m;
+
+	/*
+		Note that this is a hack.
+		systemMillis is a multi-byte value so we disable interrupts to read
+		consistently BUT this is implementation dependent on the compiler
+	*/
+	uint8_t srOld = SREG;
+	cli();
+	m = systemMillis;
+	SREG = srOld;
+
+	return m;
+}
+
+unsigned long int micros() {
+	uint8_t srOld = SREG;
+	unsigned long int overflowCounter;
+	unsigned long int timerCounter;
+
+	cli();
+	overflowCounter = systemMonotonicOverflowCnt;
+	timerCounter = TCNT0;
+
+	/*
+		Check for pending overflow that has NOT been handeled up to now
+	*/
+	if(((TIFR0 & 0x01) != 0) && (timerCounter < 255)) {
+		overflowCounter = overflowCounter + 1;
+	}
+
+	SREG = srOld;
+
+	return ((overflowCounter << 8) + timerCounter) * (64L / (F_CPU / 1000000L));
+}
+
+void delay(unsigned long millisecs) {
+	uint16_t lastMicro;
+	/*
+		Busy waiting the desired amount of milliseconds ... by
+		polling mircos
+	*/
+	lastMicro = (uint16_t)micros();
+	while(millisecs > 0) {
+		if(((uint16_t)micros() - lastMicro) >= 1000) {
+			/* Every ~ thousand microseconds tick ... */
+			lastMicro = lastMicro + 1000;
+			millisecs = millisecs - 1;
+		}
+	}
+	return;
+}
+void delayMicros(unsigned int microDelay) {
+	#if F_CPU == 20000000L
 		/*
-			Busy waiting loop.
-			Takes 4 cycles. Micro Delay has been modified above
+			Burn two additional cycles - together with function
+			calling overhead of avr-gcc and the subtraction below
+			this should lead to 1 us delay (see assembly output!)
 		*/
 		__asm__ __volatile__ (
-			"lp: sbiw %0, 1\n"
-			"    brne lp"
-			: "=w" (microDelay)
-			: "0" (microDelay)
+			"nop\n"
+			"nop\n"
 		);
-		return;
-	}
+		if((microDelay = microDelay - 1) == 0) {
+			return;
+		}
+
+		/*
+			Multiply by 5 - loop below takes 4 cycles.
+			One cycle takes 1/20000000 seconds i.e. 5e-8 s i.e. 0.05 us.
+			One loop iteration burns 4 cycles i.e. 0.2 us
+			So we require 5 loop iterations per loop to reach 1 us
+		*/
+		microDelay = (microDelay << 2) + microDelay;
+	#elif F_CPU == 16000000L
+		/*
+			Function calling, subtraction and conditional
+			branch should be equal to approx. 1us (see assembly
+			output to fine-tune).
+		*/
+		if((microDelay = microDelay - 1) == 0) {
+			return;
+		}
+
+		/*
+			Each cycle takes 1/16000000 seconds i.e. 6.25e-8 s i.e. 0.0625 us.
+			One loop iteration burns 4 cycles i.e. 0.25 us
+			So we require 4 loop iterations to reach 1 us
+
+			This calculation takes us approx. 0.5 us (see assembly
+			output to fine tune)
+		*/
+		microDelay = (microDelay << 2) - 2;
+	#elif F_CPU == 8000000L
+		if((microDelay = microDelay - 1) == 0) {
+			return;
+		}
+		if((microDelay = microDelay - 1) == 0) {
+			return;
+		}
+
+		/*
+			Each loop iteration burns 0.5us,
+			the calculation takes approx 0.5us
+			(see assembly output to fine-tune again)
+		*/
+		microDelay = (microDelay << 1) - 1;
+	#else
+		#error No known delay loop calibration available for this F_CPU
+	#endif
+
+	/*
+		Busy waiting loop.
+		Takes 4 cycles. Micro Delay has been modified above
+	*/
+	__asm__ __volatile__ (
+		"lp: sbiw %0, 1\n"
+		"    brne lp"
+		: "=w" (microDelay)
+		: "0" (microDelay)
+	);
+	return;
+}
 
 
-	int main() {
-		cli();
+int main() {
+	cli();
 
-		// Setup TIMER0 as our sysclk timer
-		// TCCR0A = 0x02;		/* CTC mode */
-		TCCR0A = 0x00;
-		TCCR0B = 0x03;		/* /64 prescaler */
-		TIMSK0 = 0x01;		/* Enable overflow interrupt */
+	// Setup TIMER0 as our sysclk timer
+	// TCCR0A = 0x02;		/* CTC mode */
+	TCCR0A = 0x00;
+	TCCR0B = 0x03;		/* /64 prescaler */
+	TIMSK0 = 0x01;		/* Enable overflow interrupt */
 
-		// Sysclk is now working - re-enable interrupts
-		sei();
+	// Sysclk is now working - re-enable interrupts
+	sei();
 
+	#ifdef DEBUG
 		// Signal bootup via LED
 		DDRB = 0x20;
 		PORTB = 0x20;
@@ -703,48 +1004,41 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 		delay(1000);
 		PORTB = 0x00;
 		delay(1000);
+	#endif
 
-		// Setup serial
-		#ifdef STEPPER_ENABLE_UART
-			/* ToDo */
-		#else
-			UCSR0B = 0;
-		#endif
+	// Disable serial (enabled from bootloader)
+	UCSR0B = 0;
 
-		// Stepper setup
-		stepperSetup();
-		// Some test code
-		// stepperPlanMovement_ConstantSpeed(0, 6.28318, 0);
-		// stepperPlanMovement_ConstantSpeed(1, 6.28318/2, 1);
+	// Initialize I2C
+	i2cSlaveInit(STEPPER_I2C_ADDRESS);
 
-		bool fwd = true;
-		for(;;) {
-			// Just some Test Code every 10 seconds
-			delay(10000);
-			stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559, fwd ? 1 : 0);
-			stepperPlanMovement_AccelerateStopToStop(1, 62.83185307179586476925286766559/2, fwd ? 1 : 0);
-			fwd = !fwd;
-			// stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559);
-		}
-	}
-#else
-	void setup() {
-		Serial.begin(115200);
-		while(!Serial) { }
-		stepperSetup();
-		// Some test code
-		// stepperPlanMovement_ConstantSpeed(0, 6.28318, 0);
-		// stepperPlanMovement_ConstantSpeed(1, 6.28318/2, 1);
+	// Stepper setup
+	stepperSetup();
+	// Some test code
+	// stepperPlanMovement_ConstantSpeed(0, 6.28318, 0);
+	// stepperPlanMovement_ConstantSpeed(1, 6.28318/2, 1);
 
-	}
+	/*
+		Since we don't use "delay" in production any more we
+		can disable TIMER0 again to reduce possible jitter
+		of TIMER2.
+	*/
+	#ifndef DEBUG
+		TIMSK0 = 0x00; /* Disable interrupts of TIMER0 */
+	#endif
 
 	bool fwd = true;
-	void loop() {
-		// Just some Test Code
+	for(;;) {
+		/*
+			Execute I2C message loop
+		*/
+		i2cMessageLoop();
+
+		// Just some Test Code every 10 seconds
 		delay(10000);
 		stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559, fwd ? 1 : 0);
 		stepperPlanMovement_AccelerateStopToStop(1, 62.83185307179586476925286766559/2, fwd ? 1 : 0);
 		fwd = !fwd;
 		// stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559);
 	}
-#endif
+}

@@ -1,11 +1,12 @@
 CPUFREQ=16000000L
 FLASHDEV=/dev/ttyU0
+I2CADR=0x14
 
 all: avr_dualsteppers.hex
 
 avr_dualsteppers.bin: avr_dualsteppers.c
 
-	avr-gcc -Wall -Os -mmcu=atmega328p -DF_CPU=$(CPUFREQ) -o avr_dualsteppers.bin avr_dualsteppers.c
+	avr-gcc -Wall -Os -mmcu=atmega328p -DF_CPU=$(CPUFREQ) -DSTEPPER_I2C_ADDRESS=$(I2CADR) -o avr_dualsteppers.bin avr_dualsteppers.c
 
 avr_dualsteppers.hex: avr_dualsteppers.bin
 
