@@ -785,9 +785,6 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_Queue_MoveTo:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
-			break;
-		case i2cCmd_Queue_ConstSpeedAccel:
 			{
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
@@ -808,6 +805,9 @@ static void i2cMessageLoop() {
 
 				/* Done */
 			}
+			break;
+		case i2cCmd_Queue_ConstSpeedAccel:
+			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_Hold:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
