@@ -749,13 +749,15 @@ static void i2cMessageLoop() {
 			break;
 		case i2cCmd_GetCommandQueueSize:
 			{
-				if(txAvail == 0) {
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+				if(txAvail < 2) {
 					/* Overflow in TX buffer ... ToDo. Currently we skip the command WITHOUT any response */
 				} else {
 					i2cBuffer_TX[i2cBuffer_TX_Head] = STEPPER_COMMANDQUEUELENGTH;
 					i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
+					i2cBuffer_TX[i2cBuffer_TX_Head] = 0; /* TODO!!!! */
+					i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
 				}
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			}
 			break;
 
