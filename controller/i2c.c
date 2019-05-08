@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "./i2c.h"
 
 #ifdef __cplusplus
@@ -131,12 +133,12 @@ enum i2cError i2cWriteRead(
 void i2cClose(
 	struct busI2C* lpBus
 ) {
-	if(lpBus == NULL) { return i2cE_Ok; }
+	if(lpBus == NULL) { return; }
 
 	close(lpBus->hFileDescriptor);
 	free(lpBus);
 
-	return i2cE_Ok;
+	return;
 }
 
 

@@ -780,7 +780,7 @@ static void i2cMessageLoop() {
 				if(constSpeed < 0) {
 					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 0);
 				} else {
-					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 1);
+					stepperPlanMovement_ConstantSpeed(channel, constSpeed, 1);
 				}
 
 				/* Done */
@@ -802,7 +802,7 @@ static void i2cMessageLoop() {
 				if(stepAccelDecel < 0) {
 					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 0);
 				} else {
-					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 1);
+					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1);
 				}
 
 				/* Done */

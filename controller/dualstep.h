@@ -17,22 +17,26 @@ enum i2cDualStepperError {
 	i2cDualStepperErrorE_Ok					= 0,
 
 	i2cDualStepperErrorE_InvalidParam,
+	i2cDualStepperErrorE_OutOfMemory,
+	i2cDualStepperErrorE_IOError,
+
+	i2cDualStepperErrorE_NotImplemented,
 };
 
 typedef enum i2cDualStepperError (*i2cDualStepper_Release)(struct i2cDualStepper* lpSelf);
 
-typedef enum i2cDualStepperError (*i2cDualStepper_GetAccelerationDeceleration)(struct i2cDualStepper* lpSelf, double* lpAcceleration, double* lpDeceleration);
-typedef enum i2cDualStepperError (*i2cDualStepper_SetAccelerationDeceleration)(struct i2cDualStepper* lpSelf, double lpAcceleration, double lpDeceleration);
-typedef enum i2cDualStepperError (*i2cDualStepper_GetVMax)(struct i2cDualStepper* lpSelf, double* lpVMax);
-typedef enum i2cDualStepperError (*i2cDualStepper_SetVMax)(struct i2cDualStepper* lpSelf, double vMax);
-typedef enum i2cDualStepperError (*i2cDualStepper_GetAlpha)(struct i2cDualStepper* lpSelf, double* lpAlpha);
-typedef enum i2cDualStepperError (*i2cDualStepper_SetAlpha)(struct i2cDualStepper* lpSelf, double alpha);
-typedef enum i2cDualStepperError (*i2cDualStepper_GetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned int* lpSteps);
-typedef enum i2cDualStepperError (*i2cDualStepper_SetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned int steps);
+typedef enum i2cDualStepperError (*i2cDualStepper_GetAccelerationDeceleration)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double* lpAcceleration, double* lpDeceleration);
+typedef enum i2cDualStepperError (*i2cDualStepper_SetAccelerationDeceleration)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double lpAcceleration, double lpDeceleration);
+typedef enum i2cDualStepperError (*i2cDualStepper_GetVMax)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double* lpVMax);
+typedef enum i2cDualStepperError (*i2cDualStepper_SetVMax)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double vMax);
+typedef enum i2cDualStepperError (*i2cDualStepper_GetAlpha)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double* lpAlpha);
+typedef enum i2cDualStepperError (*i2cDualStepper_SetAlpha)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double alpha);
+typedef enum i2cDualStepperError (*i2cDualStepper_GetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, unsigned int* lpSteps);
+typedef enum i2cDualStepperError (*i2cDualStepper_SetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, unsigned int steps);
 
 typedef enum i2cDualStepperError (*i2cDualStepper_GetFault)(struct i2cDualStepper* lpSelf, uint8_t* lpFaultBits);
 
-typedef enum i2cDualStepperError (*i2cDualStepper_RecalculateConstants)(struct i2cDualStepper* lpSelf);
+typedef enum i2cDualStepperError (*i2cDualStepper_RecalculateConstants)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel);
 
 typedef enum i2cDualStepperError (*i2cDualStepper_GetCommandQueueLength)(struct i2cDualStepper* lpSelf, unsigned long int* lpQueueLength, unsigned long int* lpQueueFree);
 
@@ -107,10 +111,10 @@ struct i2cDualStepper {
 	unsigned int			microsteps;
 };
 
-static enum i2cDualStepperError i2cDualStepper_Open(
+enum i2cDualStepperError i2cDualStepper_Open(
 	struct i2cDualStepper** lpStepperOut,
 	uint8_t deviceAddress,
-	struct i2cBus* lpBus
+	struct busI2C* lpBus
 );
 
 #ifdef __cplusplus
