@@ -5,6 +5,8 @@
 #include <util/twi.h>
 #include <stdint.h>
 
+#define DEBUG
+
 #ifndef STEPPER_I2C_ADDRESS
 	#define STEPPER_I2C_ADDRESS 0x14
 #endif
@@ -361,6 +363,8 @@ static void stepperSetup() {
 }
 
 static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction) {
+	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+
 	/*
 		Determine at which index we want to plan
 	*/
@@ -394,6 +398,8 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 }
 
 static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sTotal, int direction) {
+	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+
 	const int idx = state[stepperIndex].cmdQueueHead;
 
 	double nTotal = sTotal / state[stepperIndex].settings.alpha;
@@ -471,13 +477,13 @@ enum i2cCommand {
 	#define STEPPER_I2C_BUFFERSIZE_TX	32
 #endif
 
-static uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
-static int i2cBuffer_RX_Head = 0;
-static int i2cBuffer_RX_Tail = 0;
+static volatile uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
+static volatile int i2cBuffer_RX_Head = 0;
+static volatile int i2cBuffer_RX_Tail = 0;
 
-static uint8_t i2cBuffer_TX[STEPPER_I2C_BUFFERSIZE_TX];
-static int i2cBuffer_TX_Head = 0;
-static int i2cBuffer_TX_Tail = 0;
+static volatile uint8_t i2cBuffer_TX[STEPPER_I2C_BUFFERSIZE_TX];
+static volatile int i2cBuffer_TX_Head = 0;
+static volatile int i2cBuffer_TX_Tail = 0;
 
 /*
 	The receive and transmit handlers only enqueue
@@ -513,7 +519,7 @@ static inline uint8_t i2cEventTransmit() {
 static void i2cSlaveInit(uint8_t address) {
 	cli();
 
-	TWAR = (address << 1) | 0x01; // Respond to general calls and calls towards us
+	TWAR = (address << 1) | 0x00; // Respond to general calls and calls towards us
 	TWCR = 0xC5; // Set TWIE (TWI Interrupt enable), TWEN (TWI Enable), TWEA (TWI Enable Acknowledgement), TWINT (Clear TWINT flag by writing a 1)
 
 	sei();
@@ -523,6 +529,7 @@ static void i2cSlaveInit(uint8_t address) {
 ISR(TWI_vect) {
 	switch(TW_STATUS) { /* Note: TW_STATUS is an macro that masks status bits from TWSR) */
 		case TW_SR_SLA_ACK:
+			break;
 		case TW_SR_DATA_ACK:
 			/*
 				We have received data. This is now contained in the TWI
@@ -531,6 +538,7 @@ ISR(TWI_vect) {
 			i2cEventReceived(TWDR);
 			break;
 		case TW_ST_SLA_ACK:
+			break;
 		case TW_ST_DATA_ACK:
 			/*
 				Either slave selected (SLA_ACK) and data requested or data transmitted, ACK received
@@ -595,11 +603,12 @@ static inline double i2cRXDouble() {
 }
 
 static void i2cMessageLoop() {
-	uint8_t cmd = i2cBuffer_RX[i2cBuffer_RX_Tail];
 	uint8_t rcvBytes = (i2cBuffer_RX_Tail >= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Tail - i2cBuffer_RX_Head) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
+
 	if(rcvBytes == 0) {
 		return; /* Nothing received */
 	}
+	uint8_t cmd = i2cBuffer_RX[i2cBuffer_RX_Tail];
 	uint8_t txAvail = STEPPER_I2C_BUFFERSIZE_TX - ((i2cBuffer_TX_Tail >= i2cBuffer_TX_Head) ? (i2cBuffer_TX_Tail - i2cBuffer_TX_Head) : (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail + i2cBuffer_TX_Head));
 	/*
 		We use a switch statement here. Would a jump table
@@ -621,7 +630,7 @@ static void i2cMessageLoop() {
 					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 					return;
 				}
-				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
 				double a = (channel < 2) ? state[channel].settings.acceleration : 0.0;
 				double d = (channel < 2) ? state[channel].settings.deceleration : 0.0;
 
@@ -638,6 +647,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4+4) {
 					return; /* Command not fully received */
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				double a = i2cRXDouble();
@@ -664,7 +674,7 @@ static void i2cMessageLoop() {
 					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 					return;
 				}
-				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
 				double vmax = (channel < 2) ? state[channel].settings.vmax : -1.0;
 
 				/* Encode IEEE float to 4 byte sequence in little endian */
@@ -679,6 +689,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				double vmax = i2cRXDouble();
@@ -703,7 +714,7 @@ static void i2cMessageLoop() {
 					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 					return;
 				}
-				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
 				double alpha = (channel < 2) ? state[channel].settings.alpha : -1.0;
 
 				/* Encode IEEE float to 4 byte sequence in little endian */
@@ -718,6 +729,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				double alpha = i2cRXDouble();
@@ -742,7 +754,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2) {
 					return; /* Command not fully received until now */
 				}
-				uint8_t channel = i2cBuffer_RX[(i2cBuffer_TX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
 				updateConstants(channel);
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			}
@@ -769,6 +781,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				double constSpeed = i2cRXDouble();
@@ -791,6 +804,8 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				double stepAccelDecel = i2cRXDouble();
@@ -1077,10 +1092,10 @@ int main() {
 		i2cMessageLoop();
 
 		// Just some Test Code every 10 seconds
-		delay(10000);
+/*		delay(5000);
 		stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559, fwd ? 1 : 0);
 		stepperPlanMovement_AccelerateStopToStop(1, 62.83185307179586476925286766559/2, fwd ? 1 : 0);
-		fwd = !fwd;
+		fwd = !fwd; */
 		// stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559);
 	}
 }
