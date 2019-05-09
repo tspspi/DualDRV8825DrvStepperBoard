@@ -1,4 +1,11 @@
+#include <sys/cdefs.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <dev/iicbus/iic.h>
 
 #include "./i2c.h"
 
@@ -52,7 +59,7 @@ enum i2cError i2cWrite(
 	msg[0].len = dwBytes;
 	msg[0].buf = lpBuffer;
 
-	rdwr.msgs = &msg;
+	rdwr.msgs = msg;
 	rdwr.nmsgs = 1;
 
 	if(ioctl(lpBus->hFileDescriptor, I2CRDWR, &rdwr) < 0) {
@@ -75,14 +82,14 @@ enum i2cError i2cRead(
 
 	if(lpBus == NULL) { return i2cE_InvalidParam; }
 	if(dwBytes == 0) { return i2cE_Ok; }
-	if(lpBuffer == NULL) { return i2cE_InvalidParam; }
+	if(lpBufferOut == NULL) { return i2cE_InvalidParam; }
 
 	msg[0].slave = devAddr << 1;
 	msg[0].flags = IIC_M_RD;
 	msg[0].len = dwBytes;
-	msg[0].buf = lpBuffer;
+	msg[0].buf = lpBufferOut;
 
-	rdwr.msgs = &msg;
+	rdwr.msgs = msg;
 	rdwr.nmsgs = 1;
 
 	if(ioctl(lpBus->hFileDescriptor, I2CRDWR, &rdwr) < 0) {
@@ -106,8 +113,8 @@ enum i2cError i2cWriteRead(
 	struct iic_rdwr_data rdwr;
 
 	if(lpBus == NULL) { return i2cE_InvalidParam; }
-	if(dwBytes == 0) { return i2cE_Ok; }
-	if(lpBuffer == NULL) { return i2cE_InvalidParam; }
+	if((dwBytesTX == 0) && (dwBytesRX == 0)) { return i2cE_Ok; }
+	if((lpBufferTX == NULL) || (lpBufferRX == NULL)) { return i2cE_InvalidParam; }
 
 	msg[0].slave = devAddr << 1;
 	msg[0].flags = 0;
@@ -119,7 +126,7 @@ enum i2cError i2cWriteRead(
 	msg[1].len = dwBytesRX;
 	msg[1].buf = lpBufferRX;
 
-	rdwr.msgs = &msg;
+	rdwr.msgs = msg;
 	rdwr.nmsgs = 2;
 
 	if(ioctl(lpBus->hFileDescriptor, I2CRDWR, &rdwr) < 0) {
