@@ -386,11 +386,6 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 	state[stepperIndex].cmdQueue[idx].forward = direction;
 
 	/*
-		Serial.print("Constant speed movement planned: ");
-		Serial.println(state[stepperIndex].cmdQueue[idx].data.constantSpeed.cConst);
-	*/
-
-	/*
 		Make command active
 	*/
 	state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
@@ -471,10 +466,10 @@ enum i2cCommand {
 };
 
 #ifndef STEPPER_I2C_BUFFERSIZE_RX
-	#define STEPPER_I2C_BUFFERSIZE_RX	32
+	#define STEPPER_I2C_BUFFERSIZE_RX	128
 #endif
 #ifndef STEPPER_I2C_BUFFERSIZE_TX
-	#define STEPPER_I2C_BUFFERSIZE_TX	32
+	#define STEPPER_I2C_BUFFERSIZE_TX	128
 #endif
 
 static volatile uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
