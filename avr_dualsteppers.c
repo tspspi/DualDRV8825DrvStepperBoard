@@ -389,7 +389,7 @@ static void stepperSetup() {
 	TCCR2B = STEPPER_TIMERTICK_PRESCALER;	/* Select our prescaler, non FOCA, enable timer */
 }
 
-static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction) {
+static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
 	/*
@@ -415,11 +415,18 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 	/*
 		Make command active
 	*/
-	state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	if(immediate) {
+		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+		state[stepperIndex].c_i = -1;
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+
 	return;
 }
 
-static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sTotal, int direction) {
+static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sTotal, int direction, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
 	const int idx = state[stepperIndex].cmdQueueHead;
@@ -444,7 +451,17 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 
 	state[stepperIndex].cmdQueue[idx].forward = direction;
 
-	state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	/*
+		Make command active
+	*/
+	if(immediate) {
+		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+		state[stepperIndex].c_i = -1;
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+
 	return;
 }
 
@@ -496,7 +513,7 @@ enum i2cCommand {
 	#define STEPPER_I2C_BUFFERSIZE_RX	128
 #endif
 #ifndef STEPPER_I2C_BUFFERSIZE_TX
-	#define STEPPER_I2C_BUFFERSIZE_TX	32
+	#define STEPPER_I2C_BUFFERSIZE_TX	64
 #endif
 
 static volatile uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
@@ -551,6 +568,10 @@ static void i2cSlaveInit(uint8_t address) {
 ISR(TWI_vect) {
 	switch(TW_STATUS) { /* Note: TW_STATUS is an macro that masks status bits from TWSR) */
 		case TW_SR_SLA_ACK:
+			/*
+				Slave will read, slave has been addresses and address
+				has been acknowledged
+			*/
 			break;
 		case TW_SR_DATA_ACK:
 			/*
@@ -560,11 +581,10 @@ ISR(TWI_vect) {
 			i2cEventReceived(TWDR);
 			break;
 		case TW_ST_SLA_ACK:
-			break;
 		case TW_ST_DATA_ACK:
 			/*
-				Either slave selected (SLA_ACK) and data requested or data transmitted, ACK received
-				and next data requested
+				Either slave selected (SLA_ACK) and data requested or data
+				transmitted, ACK received and next data requested
 			*/
 			TWDR = i2cEventTransmit();
 			break;
@@ -653,15 +673,17 @@ static void i2cMessageLoop() {
 					return;
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+
+				/* Done */
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+
+				/* Build our response */
 				double a = (channel < 2) ? state[channel].settings.acceleration : 0.0;
 				double d = (channel < 2) ? state[channel].settings.deceleration : 0.0;
 
 				/* Encode IEEE float to 4 byte sequence in little endian */
 				i2cTXDouble(a);
 				i2cTXDouble(d);
-
-				/* Done */
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			}
 			break;
 		case i2cCmd_SetAccelerateDecelerate:
@@ -813,9 +835,9 @@ static void i2cMessageLoop() {
 				}
 
 				if(constSpeed < 0) {
-					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 0);
+					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 0, false);
 				} else {
-					stepperPlanMovement_ConstantSpeed(channel, constSpeed, 1);
+					stepperPlanMovement_ConstantSpeed(channel, constSpeed, 1, false);
 				}
 
 				/* Done */
@@ -837,9 +859,9 @@ static void i2cMessageLoop() {
 				}
 
 				if(stepAccelDecel < 0) {
-					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 0);
+					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 0, false);
 				} else {
-					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1);
+					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1, false);
 				}
 
 				/* Done */
@@ -859,10 +881,51 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Exec_ConstSpeed:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double constSpeed = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(constSpeed < 0) {
+					stepperPlanMovement_ConstantSpeed(channel, -1.0*constSpeed, 0, true);
+				} else {
+					stepperPlanMovement_ConstantSpeed(channel, constSpeed, 1, true);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Exec_MoveTo:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double stepAccelDecel = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(stepAccelDecel < 0) {
+					stepperPlanMovement_AccelerateStopToStop(channel, -1.0*stepAccelDecel, 0, true);
+				} else {
+					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1, true);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Exec_ConstSpeedAccel:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
