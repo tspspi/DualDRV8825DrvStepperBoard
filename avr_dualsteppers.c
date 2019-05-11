@@ -1,7 +1,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <math.h>
-#include <avr/wdt.h>
 #include <util/twi.h>
 #include <stdint.h>
 
@@ -147,33 +146,33 @@ struct stepperCommand {
 	be enqueued.
 */
 struct stepperState {
-	double					c_i;				/* The previously loaded c_i (used during calculation and advancing) */
-	uint32_t				counterCurrent;		/* Counter reduced every time until we reach zero */
+	volatile double			c_i;				/* The previously loaded c_i (used during calculation and advancing) */
+	volatile uint32_t		counterCurrent;		/* Counter reduced every time until we reach zero */
 
-	struct stepperCommand	cmdQueue[STEPPER_COMMANDQUEUELENGTH];
-	unsigned int			cmdQueueHead;
-	unsigned int			cmdQueueTail;
+	volatile struct stepperCommand cmdQueue[STEPPER_COMMANDQUEUELENGTH];
+	volatile unsigned int	cmdQueueHead;
+	volatile unsigned int	cmdQueueTail;
 
 	/* Cache for precalculated constants - see documentation */
 	struct {
-		double				c1;
-		double				c2;
-		double				c3;
-		double				c4;
-		double				c5;
-		double				c6;
+		volatile double				c1;
+		volatile double				c2;
+		volatile double				c3;
+		volatile double				c4;
+		volatile double				c5;
+		volatile double				c6;
 
-		double				c7;
-		double				c8;
-		double				c9;
-		double				c10;
+		volatile double				c7;
+		volatile double				c8;
+		volatile double				c9;
+		volatile double				c10;
 	} constants;
 
 	struct {
-		double				acceleration; /* in rad/sec */
-		double				deceleration; /* in rad/sec */
-		double				alpha; /* step size in rad */
-		double				vmax; /* in rad/sec */
+		volatile double				acceleration; /* in rad/sec */
+		volatile double				deceleration; /* in rad/sec */
+		volatile double				alpha; /* step size in rad */
+		volatile double				vmax; /* in rad/sec */
 	} settings;
 };
 
@@ -185,8 +184,13 @@ struct stepperState {
 volatile static struct stepperState			state[STEPPER_COUNT];
 
 bool bResetRun = false;
+static volatile bool bIntTriggered = false;
 
-ISR(TIMER2_COMPA_vect) {
+static void handleTimer2Interrupt() {
+	if(!bIntTriggered) {
+		return;
+	}
+	bIntTriggered = false;
 	/*
 		Interrupt handler executed with 2 * STEPPER_TIMERTICK_FRQ frequency
 		either use to disable step pins or advance state machine depending on
@@ -249,23 +253,42 @@ ISR(TIMER2_COMPA_vect) {
 				if(state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nA > 0) {
 					state[stepperIdx].c_i = state[stepperIdx].c_i / (1 + state[stepperIdx].constants.c8 * state[stepperIdx].c_i * state[stepperIdx].c_i);
 					state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nA = state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nA - 1;
+
+					/* c_i to counter value */
+					if(state[stepperIdx].c_i > 4294967295.0) {
+						state[stepperIdx].counterCurrent = ~0;
+					} else if(state[stepperIdx].c_i < 1.0) {
+						state[stepperIdx].counterCurrent = 1;
+					} else {
+						state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+					}
 				} else if(state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nC > 0) {
 					state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nC = state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nC - 1;
+
+					/* c_i to counter value */
+					if(state[stepperIdx].c_i > 4294967295.0) {
+						state[stepperIdx].counterCurrent = ~0;
+					} else if(state[stepperIdx].c_i < 1.0) {
+						state[stepperIdx].counterCurrent = 1;
+					} else {
+						state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+					}
 				} else if(state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nD > 0) {
 					state[stepperIdx].c_i = state[stepperIdx].c_i / (1 + state[stepperIdx].constants.c9 * state[stepperIdx].c_i * state[stepperIdx].c_i);
+					/* c_i to counter value */
+					if(state[stepperIdx].c_i > 4294967295.0) {
+						state[stepperIdx].counterCurrent = ~0;
+					} else if(state[stepperIdx].c_i < 1.0) {
+						state[stepperIdx].counterCurrent = 1;
+					} else {
+						state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+					}
+
 					if((state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nD = state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.nD - 1) == 0) {
 						/* Switch to next state at next interrupt */
 						state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
 						state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
 					}
-				}
-				/* c_i to counter value */
-				if(state[stepperIdx].c_i > 4294967295.0) {
-					state[stepperIdx].counterCurrent = ~0;
-				} else if(state[stepperIdx].c_i < 1.0) {
-					state[stepperIdx].counterCurrent = 1;
-				} else {
-					state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
 				}
 			} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_ConstantSpeed) {
 				state[stepperIdx].counterCurrent = state[stepperIdx].c_i; // Counter reload ...
@@ -282,6 +305,10 @@ ISR(TIMER2_COMPA_vect) {
 	}
 
 	bResetRun = !bResetRun;
+}
+
+ISR(TIMER2_COMPA_vect) {
+	bIntTriggered = true;
 }
 
 static bool updateConstants(int stepperIndex) {
@@ -469,7 +496,7 @@ enum i2cCommand {
 	#define STEPPER_I2C_BUFFERSIZE_RX	128
 #endif
 #ifndef STEPPER_I2C_BUFFERSIZE_TX
-	#define STEPPER_I2C_BUFFERSIZE_TX	128
+	#define STEPPER_I2C_BUFFERSIZE_TX	32
 #endif
 
 static volatile uint8_t i2cBuffer_RX[STEPPER_I2C_BUFFERSIZE_RX];
@@ -490,14 +517,14 @@ static volatile int i2cBuffer_TX_Tail = 0;
 static inline void i2cEventReceived(uint8_t data) {
 	// Do whatever we want with the received data
 	if(((i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX) == i2cBuffer_RX_Tail) {
-		// Buffer overflow ... ToDo
+		// Buffer overflow. ToDo
 		return;
 	}
 	i2cBuffer_RX[i2cBuffer_RX_Head] = data;
 	i2cBuffer_RX_Head = (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 }
 static inline void i2cEventBusError() {
-	// Ignore. ToDo
+	// Currently we force a reset by using the watchdog after 1s delay
 	return;
 }
 static inline uint8_t i2cEventTransmit() {
@@ -598,13 +625,13 @@ static inline double i2cRXDouble() {
 }
 
 static void i2cMessageLoop() {
-	uint8_t rcvBytes = (i2cBuffer_RX_Tail >= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Tail - i2cBuffer_RX_Head) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
+	uint8_t rcvBytes = (i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
 
 	if(rcvBytes == 0) {
 		return; /* Nothing received */
 	}
 	uint8_t cmd = i2cBuffer_RX[i2cBuffer_RX_Tail];
-	uint8_t txAvail = STEPPER_I2C_BUFFERSIZE_TX - ((i2cBuffer_TX_Tail >= i2cBuffer_TX_Head) ? (i2cBuffer_TX_Tail - i2cBuffer_TX_Head) : (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail + i2cBuffer_TX_Head));
+	uint8_t txAvail = STEPPER_I2C_BUFFERSIZE_TX - ((i2cBuffer_TX_Tail <= i2cBuffer_TX_Head) ? (i2cBuffer_TX_Head - i2cBuffer_TX_Tail) : (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail + i2cBuffer_TX_Head));
 	/*
 		We use a switch statement here. Would a jump table
 		be possible and more efficient?
@@ -1032,7 +1059,6 @@ void delayMicros(unsigned int microDelay) {
 	return;
 }
 
-
 int main() {
 	cli();
 
@@ -1066,9 +1092,6 @@ int main() {
 
 	// Stepper setup
 	stepperSetup();
-	// Some test code
-	// stepperPlanMovement_ConstantSpeed(0, 6.28318, 0);
-	// stepperPlanMovement_ConstantSpeed(1, 6.28318/2, 1);
 
 	/*
 		Since we don't use "delay" in production any more we
@@ -1079,18 +1102,14 @@ int main() {
 		TIMSK0 = 0x00; /* Disable interrupts of TIMER0 */
 	#endif
 
-	bool fwd = true;
 	for(;;) {
+		/*
+			Handle stepper events (NOT from ISR but synchronously)
+		*/
+		handleTimer2Interrupt();
 		/*
 			Execute I2C message loop
 		*/
 		i2cMessageLoop();
-
-		// Just some Test Code every 10 seconds
-/*		delay(5000);
-		stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559, fwd ? 1 : 0);
-		stepperPlanMovement_AccelerateStopToStop(1, 62.83185307179586476925286766559/2, fwd ? 1 : 0);
-		fwd = !fwd; */
-		// stepperPlanMovement_AccelerateStopToStop(0, 62.83185307179586476925286766559);
 	}
 }
