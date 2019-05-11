@@ -21,10 +21,10 @@
 		pinDir1		2	PD2		OUT
 		pinStep1	3	PD3		OUT
 
-		pinFault1	16	PC2		IN
+		pinFault1	16	PC2		IN		PCINT10 (PCI1)
 		pinDir2		14	PC0		OUT
 		pinStep2	15	PC1		OUT
-		pinFault2	17	PC3		IN
+		pinFault2	17	PC3		IN		PCINT11 (PCI1)
 
 		pinSleep    4	PD4		OUT
 		pinReset    5	PD5		OUT
@@ -185,6 +185,7 @@ struct stepperState {
 */
 volatile static struct stepperState			state[STEPPER_COUNT];
 volatile static uint8_t						stateMicrostepping;
+volatile static uint8_t						stateFault;
 
 bool bResetRun = false;
 static volatile bool bIntTriggered = false;
@@ -314,6 +315,14 @@ ISR(TIMER2_COMPA_vect) {
 	bIntTriggered = true;
 }
 
+ISR(PCINT1_vect) {
+	/*
+		Update fault pins ...
+	*/
+	uint8_t faultPins = PINC;
+	stateFault = stateFault | (((faultPins >> 2) & 0x01) ^ 0x01) | (((faultPins >> 2) & 0x02) ^ 0x02);
+}
+
 static bool updateConstants(int stepperIndex) {
 	/*
 		Expensive update of constants for motion planner
@@ -370,6 +379,11 @@ static void stepperSetup() {
 
 	stateMicrostepping = 0;
 
+	/* Enable pin change interrupts for FAULT pins */
+	PCICR = 0x02;		/* Set PCIE1 (PCIE0 and PCIE2 are disabled) */
+	PCMSK1 = 0x0C;		/* Mask only for PCINT10, PCINT11 i.e. PC2, PC3) */
+
+	/* Perform reset and initialization */
 	delay(10);
 	PORTD = PORTD | 0x10; /* Leave sleep state by pulling SLEEP HIGH (disabled) */
 	delay(2);
@@ -394,6 +408,14 @@ static void stepperSetup() {
 		state[i].settings.vmax = STEPPER_INITIAL_VMAX;
 
 		updateConstants(i);
+	}
+
+	/* Fault status to status register */
+	{
+		cli();
+		uint8_t faultPins = PINC;
+		stateFault = (((faultPins >> 2) & 0x01) ^ 0x01) | (((faultPins >> 2) & 0x02) ^ 0x02);
+		sei();
 	}
 
 	/*
@@ -823,12 +845,19 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_GetFault:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+				if(txAvail < 1) {
+					break;
+				}
+				i2cBuffer_TX[i2cBuffer_TX_Head] = stateFault;
+				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+			}
 			break;
 		case i2cCmd_RecalculateConstants:
 			{
 				if(rcvBytes < 2) {
-					return; /* Command not fully received until now */
+					break; /* Command not fully received until now */
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
 				updateConstants(channel);
