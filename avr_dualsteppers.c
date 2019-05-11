@@ -102,6 +102,8 @@
 #define STEPPER_INITIAL_ACCELERATION	1 /* 6 */
 #define STEPPER_INITIAL_DECELERATION	-1 /* -6 */
 
+#define STEPPER_INITIAL_MICROSTEPPING	0
+
 /*
 	We use our own systick implementation
 */
@@ -182,6 +184,7 @@ struct stepperState {
 	Declare state for both steppers
 */
 volatile static struct stepperState			state[STEPPER_COUNT];
+volatile static uint8_t						stateMicrostepping;
 
 bool bResetRun = false;
 static volatile bool bIntTriggered = false;
@@ -333,6 +336,18 @@ static bool updateConstants(int stepperIndex) {
 	return true;
 }
 
+static void stepperSetMicrostepping(uint8_t microsteps) {
+	switch(microsteps) {
+		case 0:			stateMicrostepping =  0; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); break;
+		case 2:			stateMicrostepping =  2; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); break;
+		case 4:			stateMicrostepping =  4; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x80; break;
+		case 8:			stateMicrostepping =  8; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x80; break;
+		case 16:		stateMicrostepping = 16; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x40; break;
+		case 32:		stateMicrostepping = 32; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x40; break;
+		default:		break;
+	}
+}
+
 static void stepperSetup() {
 	/*
 		Stop our timer if it's currently running
@@ -352,6 +367,8 @@ static void stepperSetup() {
 	PORTC = 0x00;
 	DDRD = 0xFC;
 	PORTD = 0x00;
+
+	stateMicrostepping = 0;
 
 	delay(10);
 	PORTD = PORTD | 0x10; /* Leave sleep state by pulling SLEEP HIGH (disabled) */
@@ -785,10 +802,25 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_GetMicrostepping:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+				if(txAvail < 1) {
+					break; /* ToDo: TX buffer overflow */
+				}
+				i2cBuffer_TX[i2cBuffer_TX_Head] = stateMicrostepping;
+				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
+			}
 			break;
 		case i2cCmd_SetMicrostepping:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t microstepNew = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperSetMicrostepping(microstepNew);
+			}
 			break;
 		case i2cCmd_GetFault:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
