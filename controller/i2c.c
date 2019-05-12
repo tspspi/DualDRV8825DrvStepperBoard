@@ -127,7 +127,14 @@ enum i2cError i2cWriteRead(
 	msg[1].buf = lpBufferRX;
 
 	rdwr.msgs = msg;
-	rdwr.nmsgs = 2;
+	rdwr.nmsgs = 1;
+
+	if(ioctl(lpBus->hFileDescriptor, I2CRDWR, &rdwr) < 0) {
+		return i2cE_IOError;
+	}
+
+	rdwr.msgs = &(msg[1]);
+        rdwr.nmsgs = 1;
 
 	if(ioctl(lpBus->hFileDescriptor, I2CRDWR, &rdwr) < 0) {
 		return i2cE_IOError;

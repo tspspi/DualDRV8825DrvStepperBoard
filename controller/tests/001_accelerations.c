@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
 	}
 	printf("Stepper opened\n");
 
-/*	printf("Querying acceleration and deceleration: ");
+	printf("Querying acceleration and deceleration: ");
 	union {
 		double accel;
 		uint64_t raw;
@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
 	} d;
 	step->obj.vtbl->getAccelerationDeceleration(step, 0, &a.accel, &d.decel);
 	printf("%lf and %lf (raw %08llx %08llx)\n", a.accel, d.decel, a.raw, d.raw);
-*/
+
 
 	printf("Running accelerated movement with default settings\n");
 	step->obj.vtbl->queueMoveAngularDistance(step, 1, -62.83185307179586476925286766559/5.0);
@@ -61,8 +61,15 @@ int main(int argc, char* argv[]) {
         step->obj.vtbl->queueMoveAngularDistance(step, 0, 62.83185307179586476925286766559);
         step->obj.vtbl->queueMoveAngularDistance(step, 1, 62.83185307179586476925286766559);
         step->obj.vtbl->queueMoveAngularDistance(step, 0, -62.83185307179586476925286766559);
-	sleep(1);
+	printf("Waiting for constant speed queue\n");
+	sleep(30);
+	step->obj.vtbl->queueConstantSpeed(step, 0, 6);
+	step->obj.vtbl->queueConstantSpeed(step, 1, 3);
+	sleep(20);
+	step->obj.vtbl->execMoveAngularDistance(step, 1, -62.83185307179586476925286766559/5.0);
+        step->obj.vtbl->execMoveAngularDistance(step, 0, 62.83185307179586476925286766559/5.0);
 
+	sleep(1);
 	printf("Releasing\n");
 	step->obj.vtbl->release(step);
 
