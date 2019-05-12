@@ -850,7 +850,10 @@ static void i2cMessageLoop() {
 				if(txAvail < 1) {
 					break;
 				}
+				cli();
 				i2cBuffer_TX[i2cBuffer_TX_Head] = stateFault;
+				stateFault = 0; // Reset fault pins after readout
+				sei();
 				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 			}
 			break;
