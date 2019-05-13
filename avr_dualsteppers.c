@@ -90,6 +90,7 @@
 #define STEPPER_TIMERTICK_FRQ 			7812/2
 #define STEPPER_TIMERTICK_PRESCALER		0x06
 #define STEPPER_TIMERTICK_OVERFLOWVAL	0x01
+#define STEPPER_WAKEUP_SLEEP_TICKS		10			/* More than 1.2 ms! */
 
 /*
 #define STEPPER_INITIAL_ALPHA			(0.01 * M_PI)
@@ -116,6 +117,7 @@ enum stepperCommandType {
 	stepperCommand_AccelerateStopToStop,
 	stepperCommand_ConstantSpeed,
 	stepperCommand_Stop,
+	stepperCommand_Disable,
 };
 
 struct stepperCommand {
@@ -186,6 +188,8 @@ struct stepperState {
 volatile static struct stepperState			state[STEPPER_COUNT];
 volatile static uint8_t						stateMicrostepping;
 volatile static uint8_t						stateFault;
+volatile static uint8_t						drvEnableState;
+volatile static uint8_t						drvRealEnabled;
 
 bool bResetRun = false;
 static volatile bool bIntTriggered = false;
@@ -195,6 +199,17 @@ static void handleTimer2Interrupt() {
 		return;
 	}
 	bIntTriggered = false;
+
+	/*
+		Re-enable counter. This is used to delay the
+		next stepper commands after re-awaking from
+		sleep.
+	*/
+	if((drvRealEnabled & 0x7F) != 0) {
+		drvRealEnabled = drvRealEnabled - 1;
+		return;
+	}
+
 	/*
 		Interrupt handler executed with 2 * STEPPER_TIMERTICK_FRQ frequency
 		either use to disable step pins or advance state machine depending on
@@ -209,6 +224,12 @@ static void handleTimer2Interrupt() {
 			} else {
 				// Pulse PC1 low
 				PORTC = PORTC & (~0x02);
+			}
+
+			if((drvEnableState == 0) && ((drvRealEnabled & 0x80) != 0)) {
+				/* Put driver into sleep if none is enabled AND our current real enable state is not the same */
+				drvRealEnabled = drvRealEnabled & 0x7F;
+				PORTD = PORTD & (~0x10); /* Enter sleep state by pulling SLEEP LOW (enabled) */
 			}
 		} else {
 			if(state[stepperIdx].cmdQueueTail == state[stepperIdx].cmdQueueHead) {
@@ -235,6 +256,15 @@ static void handleTimer2Interrupt() {
 					}
 				}
 
+				/* Check if drivers are disabled and we have to execute an command ... */
+				if((drvRealEnabled & 0x80) == 0) {
+					/* Steppers are disabled. Re-enable and wait for startup period */
+					PORTD = PORTD | 0x10; /* Leave sleep state by pulling SLEEP HIGH (disabled) */
+					drvRealEnabled = 0x80 | STEPPER_WAKEUP_SLEEP_TICKS;
+					drvEnableState = drvEnableState | (1 << stepperIdx);
+					break; // Next stepper as usual
+				}
+
 				if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_AccelerateStopToStop) {
 					state[stepperIdx].c_i = state[stepperIdx].cmdQueue[qIdx].data.acceleratedStopToStop.initialDelayTicks;
 					if(state[stepperIdx].c_i > 4294967295.0) {
@@ -247,6 +277,12 @@ static void handleTimer2Interrupt() {
 				} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_ConstantSpeed) {
 					state[stepperIdx].c_i = state[stepperIdx].cmdQueue[qIdx].data.constantSpeed.cConst;
 					state[stepperIdx].counterCurrent = state[stepperIdx].cmdQueue[qIdx].data.constantSpeed.cConst;
+				} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_Disable) {
+					drvEnableState = drvEnableState & (~(0x01 << stepperIdx));
+					/* Switch to next state at next interrupt */
+					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
+					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
+					continue;
 				} else {
 					continue;
 				}
@@ -307,7 +343,6 @@ static void handleTimer2Interrupt() {
 			}
 		}
 	}
-
 	bResetRun = !bResetRun;
 }
 
@@ -410,6 +445,9 @@ static void stepperSetup() {
 		updateConstants(i);
 	}
 
+	drvEnableState = 0x03; /* Both steppers enabled after initialization. ToDo: Should we have them DISABLED by default and have the system to ENABLE them? */
+	drvRealEnabled = 0x80; /* Both steppers are enabled and we do not need any grace period till we can perform some work ... */
+
 	/* Fault status to status register */
 	{
 		cli();
@@ -470,6 +508,8 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 
 	const int idx = state[stepperIndex].cmdQueueHead;
 
+	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_AccelerateStopToStop;
+
 	double nTotal = sTotal / state[stepperIndex].settings.alpha;
 
 	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = state[stepperIndex].constants.c2;
@@ -489,6 +529,27 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.initialDelayTicks = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
 
 	state[stepperIndex].cmdQueue[idx].forward = direction;
+
+	/*
+		Make command active
+	*/
+	if(immediate) {
+		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+		state[stepperIndex].c_i = -1;
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+
+	return;
+}
+
+static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
+	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+
+	const int idx = state[stepperIndex].cmdQueueHead;
+
+	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_Disable;
 
 	/*
 		Make command active
@@ -927,7 +988,6 @@ static void i2cMessageLoop() {
 				} else {
 					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1, false);
 				}
-
 				/* Done */
 			}
 			break;
@@ -938,9 +998,16 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_DisableDrv:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2) {
+					return; /* Not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Disable(channel, false);
+			}
 			break;
-
 		case i2cCmd_Exec_Sync:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
@@ -998,9 +1065,16 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Exec_DisableDrv:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2) {
+					return; /* Not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Disable(channel, true);
+			}
 			break;
-
 		case i2cCmd_EmergencyStop:
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
