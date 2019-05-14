@@ -200,16 +200,40 @@ static enum i2cDualStepperError i2cDual_GetMicrosteps(
 	unsigned long int dwChannel,
 	unsigned int* lpSteps
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(dwChannel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[1];
+	uint8_t resp[1];
+	req[0] = i2cCmd_SetAlpha;
+
+	i2e = i2cWriteRead(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req), resp, sizeof(resp));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	if(lpSteps != NULL) { (*lpSteps) = resp[0]; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_SetMicrosteps(
 	struct i2cDualStepper* lpSelf,
 	unsigned long int dwChannel,
 	unsigned int steps
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(dwChannel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2];
+	req[0] = i2cCmd_SetMicrostepping;
+	req[1] = steps;
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 
 static enum i2cDualStepperError i2cDual_GetFault(
@@ -321,8 +345,19 @@ static enum i2cDualStepperError i2cDual_Queue_Hold(
 	struct i2cDualStepper* lpSelf,
 	unsigned long int channel
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2];
+	req[0] = i2cCmd_Queue_Hold;
+	req[1] = (uint8_t)channel;
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_Queue_DisableDriver(
 	struct i2cDualStepper* lpSelf,
@@ -404,8 +439,19 @@ static enum i2cDualStepperError i2cDual_Exec_Hold(
 	struct i2cDualStepper* lpSelf,
 	unsigned long int channel
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2];
+	req[0] = i2cCmd_Exec_Hold;
+	req[1] = (uint8_t)channel;
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_Exec_DisableDriver(
 	struct i2cDualStepper* lpSelf,
@@ -429,14 +475,32 @@ static enum i2cDualStepperError i2cDual_Exec_DisableDriver(
 static enum i2cDualStepperError i2cDual_EmergencyStop(
 	struct i2cDualStepper* lpSelf
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[1];
+	req[0] = i2cCmd_EmergencyStop;
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_EmergencyOff(
 	struct i2cDualStepper* lpSelf
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[1];
+	req[0] = i2cCmd_EmergencyOff;
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 
 
