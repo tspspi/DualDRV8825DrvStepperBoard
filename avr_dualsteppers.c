@@ -10,6 +10,14 @@
 	#define STEPPER_I2C_ADDRESS 0x14
 #endif
 
+/*
+	If the following preprocessor directive is defined the steppers
+	will be put in sleep mode upon reset (after initial power-up)
+
+	There will be lower
+*/
+#define STEPPER_DISABLE_STARTUP 1
+
 #ifndef __cplusplus
 	typedef int bool;
 	#define true 1
@@ -283,6 +291,16 @@ static void handleTimer2Interrupt() {
 					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
 					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
 					continue;
+				} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_Stop) {
+					/*
+						Our driver has already been enabled since we do that whenever we
+						reach an enqueued command. So simply remove this task from the task
+						queue. As long as nothing has been enqueued the steppers will be
+						engaged and stopped
+					*/
+					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
+					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
+					continue;
 				} else {
 					continue;
 				}
@@ -381,13 +399,29 @@ static bool updateConstants(int stepperIndex) {
 }
 
 static void stepperSetMicrostepping(uint8_t microsteps) {
+	/*
+		pinMode0    8	PB0		OUT
+		pinMode2    6	PD6		OUT
+		pinMode1    7	PD7		OUT
+
+		M0	M1	M2		Steps
+		0	0	0		Full steps
+		1	0	0		1/2
+		0	1	0		1/4
+		1	1	0		1/8
+		0	0	1		1/16
+		1	0	1		1/32
+		0	1	1		Undefined (1/64)
+		1	1	1		Undefined (1/128)
+	*/
+
 	switch(microsteps) {
-		case 0:			stateMicrostepping =  0; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); break;
-		case 2:			stateMicrostepping =  2; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); break;
-		case 4:			stateMicrostepping =  4; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x80; break;
-		case 8:			stateMicrostepping =  8; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x80; break;
-		case 16:		stateMicrostepping = 16; PORTB = PORTB & ~(0x01); PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x40; break;
-		case 32:		stateMicrostepping = 32; PORTB = PORTB |   0x01 ; PORTD = PORTD & ~(0x3F); PORTD = PORTD | 0x40; break;
+		case 0:			stateMicrostepping =  0; PORTB = PORTB & (~(0x01)); PORTD = PORTD & 0x3F; 						 break;	/* PB0: 0, PD7: 0, PD6: 0 */
+		case 2:			stateMicrostepping =  2; PORTB = PORTB |     0x01 ; PORTD = PORTD & 0x3F;						 break;	/* PB0: 1, PD7: 0, PD6: 0 */
+		case 4:			stateMicrostepping =  4; PORTB = PORTB & (~(0x01)); PORTD = PORTD & 0x3F; PORTD = PORTD | 0x80; break;	/* PB0: 0, PD7: 1, PD6: 0 */
+		case 8:			stateMicrostepping =  8; PORTB = PORTB |     0x01 ; PORTD = PORTD & 0x3F; PORTD = PORTD | 0x80; break;	/* PB0: 1, PD7: 1, PD6: 0 */
+		case 16:		stateMicrostepping = 16; PORTB = PORTB & (~(0x01)); PORTD = PORTD & 0x3F; PORTD = PORTD | 0x40; break;	/* PB0: 0, PD7: 0, PD6: 1 */
+		case 32:		stateMicrostepping = 32; PORTB = PORTB |     0x01 ; PORTD = PORTD & 0x3F; PORTD = PORTD | 0x40; break;	/* PB0: 1, PD7: 0, PD6: 1 */
 		default:		break;
 	}
 }
@@ -464,6 +498,10 @@ static void stepperSetup() {
 	OCR2A = 0x01;							/* We count up to one - so trigger every pulse */
 	TIMSK2 = 0x02;							/* Set OCIE2A flag to enable interrupts on output compare */
 	TCCR2B = STEPPER_TIMERTICK_PRESCALER;	/* Select our prescaler, non FOCA, enable timer */
+
+	#ifdef STEPPER_DISABLE_STARTUP
+		drvEnableState = 0x00; /* Steppers will be disabled on startup */
+	#endif
 }
 
 static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction, bool immediate) {
@@ -550,6 +588,27 @@ static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
 	const int idx = state[stepperIndex].cmdQueueHead;
 
 	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_Disable;
+
+	/*
+		Make command active
+	*/
+	if(immediate) {
+		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+		state[stepperIndex].c_i = -1;
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+
+	return;
+}
+
+static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
+	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+
+	const int idx = state[stepperIndex].cmdQueueHead;
+
+	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_Stop;
 
 	/*
 		Make command active
@@ -995,7 +1054,15 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_Hold:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2) {
+					return; /* Not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Stop(channel, false);
+			}
 			break;
 		case i2cCmd_Queue_DisableDrv:
 			{
@@ -1062,7 +1129,15 @@ static void i2cMessageLoop() {
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Exec_Hold:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2) {
+					return; /* Not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Stop(channel, true);
+			}
 			break;
 		case i2cCmd_Exec_DisableDrv:
 			{
@@ -1076,12 +1151,19 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_EmergencyStop:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Stop(0, true);
+				stepperPlanMovement_Stop(1, true);
+			}
 			break;
 		case i2cCmd_EmergencyOff:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				stepperPlanMovement_Disable(0, true);
+				stepperPlanMovement_Disable(1, true);
+			}
 			break;
-
 		default:
 			/*
 				Unknown command. Simply ignore this byte. This allows

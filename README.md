@@ -43,35 +43,35 @@ Additional features:
 
 ## Implementation status of I2C commands
 
-|  Command | Implemented | Tested | Description |
-| --- | --- | --- | --- |
+|  Command | Implemented | Tested | Description | Comments |
+| --- | --- | --- | --- | --- |
 | Group 0: Configuration |
-| i2cCmd_GetAccelerateDecelerate  	|  Y |  |  8 byte payload Slave -> Master + 1 Byte Status |
-| i2cCmd_SetAccelerateDecelerate  	|  Y |  |  8 Byte payload Master -> Slave |  |
-| i2cCmd_GetVMax  					|  Y |  |  4 byte payload Slave -> Master + 1 Byte Status |  |
-| i2cCmd_SetVMax  					|  Y |  |  4 Byte payload Mater -> Slave |
-| i2cCmd_GetAlpha  					|  Y |  |  4 Byte payload Slave -> Master + 1 Byte Status |
-| i2cCmd_SetAlpha  					|  Y |  |  4 Byte payload Master -> Slave |
-| i2cCmd_GetMicrostepping  			|  Y |  |  1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status |
-| i2cCmd_SetMicrostepping  			|  Y |  |  1 Byte payload Master -> Slave |
-| i2cCmd_GetFault  					|  Y |  |  1 Byte payload Master -> Slave (IS status) |
-| i2cCmd_RecalculateConstants  		|  Y |  |  Used to trigger recalculation of all constants (expensive operation; system should be stopped) |
+| i2cCmd_GetAccelerateDecelerate  	|  Y | Y |  8 byte payload Slave -> Master + 1 Byte Status | |
+| i2cCmd_SetAccelerateDecelerate  	|  Y |  |  8 Byte payload Master -> Slave |  | |
+| i2cCmd_GetVMax  					|  Y |  |  4 byte payload Slave -> Master + 1 Byte Status |  | |
+| i2cCmd_SetVMax  					|  Y |  |  4 Byte payload Mater -> Slave | |
+| i2cCmd_GetAlpha  					|  Y |  |  4 Byte payload Slave -> Master + 1 Byte Status | |
+| i2cCmd_SetAlpha  					|  Y |  |  4 Byte payload Master -> Slave | |
+| i2cCmd_GetMicrostepping  			|  Y |  |  1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status | |
+| i2cCmd_SetMicrostepping  			|  Y | Y |  1 Byte payload Master -> Slave | Note: Currently microstepping does __not__ rescale step size (alpha) automatically |
+| i2cCmd_GetFault  					|  Y |  |  1 Byte payload Master -> Slave (IS status) | |
+| i2cCmd_RecalculateConstants  		|  Y |  |  Used to trigger recalculation of all constants (expensive operation; system should be stopped) | |
 | Group 1: Queue |
-| i2cCmd_GetCommandQueueSize  		|  Y |  |  Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status |
+| i2cCmd_GetCommandQueueSize  		|  Y |  |  Get size (first byte) and unused entires (second byte) of command queue + 1 Byte status | |
 | Group 2: Enqueue commands |
-| i2cCmd_Queue_Sync  				|  |  |  Sync. point; 1 Byte Channel |
-| i2cCmd_Queue_ConstSpeed  			|  Y | Y |  Constant speed; 1 Byte Channel; 4 Byte Speed |
-| i2cCmd_Queue_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position |
-| i2cCmd_Queue_ConstSpeedAccel  	|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed |
-| i2cCmd_Queue_Hold  				|  |  |  Hold position; 1 byte channel |
-| i2cCmd_Queue_DisableDrv  			|  |  |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) |
+| i2cCmd_Queue_Sync  				|  |  |  Sync. point; 1 Byte Channel | |
+| i2cCmd_Queue_ConstSpeed  			|  Y | Y |  Constant speed; 1 Byte Channel; 4 Byte Speed | |
+| i2cCmd_Queue_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position | |
+| i2cCmd_Queue_ConstSpeedAccel  	|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
+| i2cCmd_Queue_Hold  				|  Y | Y |  Hold position; 1 byte channel | |
+| i2cCmd_Queue_DisableDrv  			|  Y | Y |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) | |
 | Group 3: Execute commands immedately |
-| i2cCmd_Exec_Sync  				|  |  |  Sync. point; 1 Byte Channel |
-| i2cCmd_Exec_ConstSpeed  			|  Y |  |  Constant speed; 1 Byte Channel; 4 Byte Speed |
-| i2cCmd_Exec_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position |
-| i2cCmd_Exec_ConstSpeedAccel  		|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed |
-| i2cCmd_Exec_Hold  				|  |  |  Hold position; 1 byte channel |
-| i2cCmd_Exec_DisableDrv  			|  |  |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) |
+| i2cCmd_Exec_Sync  				|  |  |  Sync. point; 1 Byte Channel | |
+| i2cCmd_Exec_ConstSpeed  			|  Y | Y |  Constant speed; 1 Byte Channel; 4 Byte Speed | |
+| i2cCmd_Exec_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position | |
+| i2cCmd_Exec_ConstSpeedAccel  		|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
+| i2cCmd_Exec_Hold  				|  Y | Y |  Hold position; 1 byte channel | |
+| i2cCmd_Exec_DisableDrv  			|  Y | Y |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) | |
 | Group F: Emergency commands |
-| i2cCmd_EmergencyStop  			|  |  |  Keeps motors engaged but stopped |
-| i2cCmd_EmergencyOff  				|  |  |  Keeps motors disabled |
+| i2cCmd_EmergencyStop  			|  Y |  |  Keeps motors engaged but stopped | Drivers stay engaged so current will keep flowing |
+| i2cCmd_EmergencyOff  				|  Y |  |  Keeps motors disabled | Since drivers are disabled motors are free to turn freely (inertia!) |
