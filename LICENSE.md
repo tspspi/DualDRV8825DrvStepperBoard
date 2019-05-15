@@ -8,6 +8,9 @@ are permitted provided that the following conditions are met:
    and the following disclaimer in the documentation and/or other materials
    provided with the distribution.
 
+3. If this code has been helpful contributions in BTC to
+   1M24v2z6pEXyPv8ypMU1jKM88gUGhgap4m are highly welcome.
+
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
