@@ -83,7 +83,7 @@ struct i2cDualStepper_VTBL {
 	i2cDualStepper_Exec_Sync						execSync;
 	i2cDualStepper_Exec_ConstantSpeed				execConstantSpeed;
 	i2cDualStepper_Exec_MoveAngularDistance			execMoveAngularDistance;
-	i2cDualStepper_Exec_AccelerateToSpeed			execAcceerateToSpeed;
+	i2cDualStepper_Exec_AccelerateToSpeed			execAccelerateToSpeed;
 	i2cDualStepper_Exec_Hold						execHold;
 	i2cDualStepper_Exec_DisableDriver				execDisableDriver;
 

@@ -338,8 +338,21 @@ static enum i2cDualStepperError i2cDual_Queue_AccelerateToSpeed(
 	unsigned long int channel,
 	double targetSpeed
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2+4];
+	req[0] = i2cCmd_Queue_ConstSpeedAccel;
+	req[1] = (uint8_t)channel;
+
+	serializeIEEE754SingleFloat_4Bytes((float)targetSpeed, &(req[2]));
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_Queue_Hold(
 	struct i2cDualStepper* lpSelf,
@@ -432,8 +445,21 @@ static enum i2cDualStepperError i2cDual_Exec_AccelerateToSpeed(
 	unsigned long int channel,
 	double targetSpeed
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2+4];
+	req[0] = i2cCmd_Exec_ConstSpeedAccel;
+	req[1] = (uint8_t)channel;
+
+	serializeIEEE754SingleFloat_4Bytes((float)targetSpeed, &(req[2]));
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_Exec_Hold(
 	struct i2cDualStepper* lpSelf,

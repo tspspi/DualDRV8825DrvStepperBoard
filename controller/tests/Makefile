@@ -1,4 +1,4 @@
-all: 001_accelerations 002_disabledrivers 003_microstepping
+all: 001_accelerations 002_disabledrivers 003_microstepping 004_constspeedaccel
 
 001_accelerations: 001_accelerations.c ../libi2cstepper.a
 
@@ -11,3 +11,7 @@ all: 001_accelerations 002_disabledrivers 003_microstepping
 003_microstepping: 003_microstepping.c ../libi2cstepper.a
 
 	clang -Wall -ansi -std=c99 -pedantic -o 003_microstepping 003_microstepping.c -L../ -li2cstepper
+
+004_constspeedaccel: 004_constspeedaccel.c ../libi2cstepper.a
+
+	clang -Wall -ansi -std=c99 -pedantic -o 004_constspeedaccel 004_constspeedaccel.c -L../ -li2cstepper
