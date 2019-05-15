@@ -126,6 +126,8 @@ enum stepperCommandType {
 	stepperCommand_ConstantSpeed,
 	stepperCommand_Stop,
 	stepperCommand_Disable,
+	stepperCommand_AccelerateToSpeed,
+	stepperCommand_DecelerateToSpeed,
 };
 
 struct stepperCommand {
@@ -144,6 +146,14 @@ struct stepperCommand {
 		struct {
 			uint32_t			cConst; /* In case of constant speed mode we supply the tick count per constant step */
 		} constantSpeed;
+		struct {
+			uint32_t			nA;
+			uint32_t			nD;
+
+			double				c8, c9;
+			double				cEnd;
+			double				cStart;
+		} accelerateDecelerateToConstSpeed;
 	} data;
 };
 
@@ -158,33 +168,35 @@ struct stepperCommand {
 	be enqueued.
 */
 struct stepperState {
-	volatile double			c_i;				/* The previously loaded c_i (used during calculation and advancing) */
-	volatile uint32_t		counterCurrent;		/* Counter reduced every time until we reach zero */
+	double							c_i;				/* The previously loaded c_i (used during calculation and advancing) */
+	uint32_t						counterCurrent;		/* Counter reduced every time until we reach zero */
 
-	volatile struct stepperCommand cmdQueue[STEPPER_COMMANDQUEUELENGTH];
-	volatile unsigned int	cmdQueueHead;
-	volatile unsigned int	cmdQueueTail;
+	struct stepperCommand			cmdQueue[STEPPER_COMMANDQUEUELENGTH];
+	unsigned int					cmdQueueHead;
+	unsigned int					cmdQueueTail;
+
+	long int						currentPosition;			/* Current position in "steps" i.e. currentPosition * alpha = angular Position */
 
 	/* Cache for precalculated constants - see documentation */
 	struct {
-		volatile double				c1;
-		volatile double				c2;
-		volatile double				c3;
-		volatile double				c4;
-		volatile double				c5;
-		volatile double				c6;
+		double						c1;
+		double						c2;
+		double						c3;
+		double						c4;
+		double						c5;
+		double						c6;
 
-		volatile double				c7;
-		volatile double				c8;
-		volatile double				c9;
-		volatile double				c10;
+		double						c7;
+		double						c8;
+		double						c9;
+		double						c10;
 	} constants;
 
 	struct {
-		volatile double				acceleration; /* in rad/sec */
-		volatile double				deceleration; /* in rad/sec */
-		volatile double				alpha; /* step size in rad */
-		volatile double				vmax; /* in rad/sec */
+		double						acceleration; /* in rad/sec */
+		double						deceleration; /* in rad/sec */
+		double						alpha; /* step size in rad */
+		double						vmax; /* in rad/sec */
 	} settings;
 };
 
@@ -193,11 +205,11 @@ struct stepperState {
 /*
 	Declare state for both steppers
 */
-volatile static struct stepperState			state[STEPPER_COUNT];
-volatile static uint8_t						stateMicrostepping;
-volatile static uint8_t						stateFault;
-volatile static uint8_t						drvEnableState;
-volatile static uint8_t						drvRealEnabled;
+static struct stepperState			state[STEPPER_COUNT];
+static uint8_t						stateMicrostepping;
+volatile static uint8_t				stateFault;
+static uint8_t						drvEnableState;
+static uint8_t						drvRealEnabled;
 
 bool bResetRun = false;
 static volatile bool bIntTriggered = false;
@@ -301,6 +313,15 @@ static void handleTimer2Interrupt() {
 					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
 					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
 					continue;
+				} else if((state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_AccelerateToSpeed) || (state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_DecelerateToSpeed)) {
+					state[stepperIdx].c_i = state[stepperIdx].cmdQueue[qIdx].data.accelerateDecelerateToConstSpeed.cStart;
+					if(state[stepperIdx].c_i > 4294967295.0) {
+						state[stepperIdx].counterCurrent = ~0;
+					} else if(state[stepperIdx].c_i < 1.0) {
+						state[stepperIdx].counterCurrent = 1;
+					} else {
+						state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+					}
 				} else {
 					continue;
 				}
@@ -348,6 +369,40 @@ static void handleTimer2Interrupt() {
 						state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
 					}
 				}
+			} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_AccelerateToSpeed) {
+				state[stepperIdx].c_i = state[stepperIdx].c_i / (1 + state[stepperIdx].constants.c8 * state[stepperIdx].c_i * state[stepperIdx].c_i);
+
+				/* c_i to counter value */
+				if(state[stepperIdx].c_i > 4294967295.0) {
+					state[stepperIdx].counterCurrent = ~0;
+				} else if(state[stepperIdx].c_i < 1.0) {
+					state[stepperIdx].counterCurrent = 1;
+				} else {
+					state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+				}
+
+				if((state[stepperIdx].cmdQueue[qIdx].data.accelerateDecelerateToConstSpeed.nA = state[stepperIdx].cmdQueue[qIdx].data.accelerateDecelerateToConstSpeed.nA - 1) == 0) {
+					/* Switch to next state at next interrupt */
+					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
+					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
+				}
+			} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_DecelerateToSpeed) {
+				state[stepperIdx].c_i = state[stepperIdx].c_i / (1 + state[stepperIdx].constants.c9 * state[stepperIdx].c_i * state[stepperIdx].c_i);
+
+				/* c_i to counter value */
+				if(state[stepperIdx].c_i > 4294967295.0) {
+					state[stepperIdx].counterCurrent = ~0;
+				} else if(state[stepperIdx].c_i < 1.0) {
+					state[stepperIdx].counterCurrent = 1;
+				} else {
+					state[stepperIdx].counterCurrent = (uint32_t)state[stepperIdx].c_i;
+				}
+
+				if((state[stepperIdx].cmdQueue[qIdx].data.accelerateDecelerateToConstSpeed.nD = state[stepperIdx].cmdQueue[qIdx].data.accelerateDecelerateToConstSpeed.nD - 1) == 0) {
+					/* Switch to next state at next interrupt */
+					state[stepperIdx].cmdQueueTail = (state[stepperIdx].cmdQueueTail + 1) % STEPPER_COMMANDQUEUELENGTH;
+					state[stepperIdx].c_i = -1; /* This will initialize the next state as soon as it is available */
+				}
 			} else if(state[stepperIdx].cmdQueue[qIdx].cmdType == stepperCommand_ConstantSpeed) {
 				state[stepperIdx].counterCurrent = state[stepperIdx].c_i; // Counter reload ...
 			}
@@ -355,9 +410,19 @@ static void handleTimer2Interrupt() {
 			if(stepperIdx == 0) {
 				// Pulse PD2 high
 				PORTD = PORTD | 0x08;
+				if((PORTD & 0x04) != 0) {
+					state[0].currentPosition++;
+				} else {
+					state[0].currentPosition--;
+				}
 			} else {
 				// Pulse PC1 high
 				PORTC = PORTC | 0x02;
+				if((PORTC & 0x01) != 0) {
+					state[1].currentPosition++;
+				} else {
+					state[1].currentPosition--;
+				}
 			}
 		}
 	}
@@ -394,6 +459,8 @@ static bool updateConstants(int stepperIndex) {
 	state[stepperIndex].constants.c8 = state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
 	state[stepperIndex].constants.c9 = state[stepperIndex].settings.deceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
 	state[stepperIndex].constants.c10 = state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
+/*	state[stepperIndex].constants.c11 = ((double)STEPPER_TIMERTICK_FRQ)*((double)STEPPER_TIMERTICK_FRQ) / (2.0 * state[stepperIndex].settings.acceleration);
+	state[stepperIndex].constants.c12 = ((double)STEPPER_TIMERTICK_FRQ)*((double)STEPPER_TIMERTICK_FRQ) / (2.0 * state[stepperIndex].settings.deceleration); */
 
 	return true;
 }
@@ -471,6 +538,8 @@ static void stepperSetup() {
 		state[i].counterCurrent = 0;
 		state[i].c_i = -1; /* Will trigger initialization after planning */
 
+		state[i].currentPosition = 0; /* Initialize always at position 0 */
+
 		state[i].settings.acceleration = STEPPER_INITIAL_ACCELERATION;
 		state[i].settings.deceleration = STEPPER_INITIAL_DECELERATION;
 		state[i].settings.alpha = STEPPER_INITIAL_ALPHA;
@@ -479,7 +548,7 @@ static void stepperSetup() {
 		updateConstants(i);
 	}
 
-	drvEnableState = 0x03; /* Both steppers enabled after initialization. ToDo: Should we have them DISABLED by default and have the system to ENABLE them? */
+	drvEnableState = 0x03; /* Both steppers enabled after initialization. */
 	drvRealEnabled = 0x80; /* Both steppers are enabled and we do not need any grace period till we can perform some work ... */
 
 	/* Fault status to status register */
@@ -624,6 +693,153 @@ static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
 	return;
 }
 
+static void stepperPlanSpeedChange(int stepperIndex, double v, int direction, bool immediate) {
+	/*
+		We want to change our speed from the current to v. This may
+		require an acceleration or deceleration slope and will be followed
+		by a constant speed movement.
+
+		This command is normally used when the stepper driver is used for
+		motion along an unknown axis (for example propelling an robot, etc.)
+
+		The current "speed" can be determined by reading the current c_i value
+		for the given stepper
+
+		The steps are calculated the same way as with Stop-to-Stop movement
+		pattern, start value is the current count. The only thing that has to
+		be calculated is the number of steps that the acceleration / deceleration
+		takes
+
+		Note that if directions are NOT equal from the current or previous
+		operation and the newly enqueued we have to FIRST stop the current / last
+		movement and then do an acceleration to constant speed with OUR direction
+	*/
+	if((stepperIndex > 1) || (stepperIndex < 0)) { return; }
+	const int idx = state[stepperIndex].cmdQueueHead;
+
+	/*
+		Calculate number of ticks per step at the end and fetch the current
+		number of ticks. Larger number of ticks means SLOWER speed so we have
+		to ACCELERATE if cTicksCurrent > cTicksEnd. We have to DECELERATE if
+		cTicksCurrent < cTicksEnd
+	*/
+	double cTicksEnd;
+	const double minTicks = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ; /* c0 for end-to-end movement */
+	if(v > 0) {
+		cTicksEnd = state[stepperIndex].constants.c10 / v;
+	} else {
+		cTicksEnd = minTicks;
+	}
+
+	double cTicksCurrent;
+	int directionCurrent;
+
+	if(state[stepperIndex].cmdQueueTail == state[stepperIndex].cmdQueueHead) {
+		/* Our stepper is currently stopped */
+
+		cTicksCurrent = minTicks;
+		directionCurrent = direction;
+	} else {
+		if(immediate) {
+			cTicksCurrent = state[stepperIndex].c_i; /* Current speed is encoded in this value */
+			directionCurrent = state[stepperIndex].cmdQueue[state[stepperIndex].cmdQueueTail].forward;
+		} else {
+			/*
+				We have to fetch the c_end from the command directly in front of us
+			*/
+			const int idxBefore = (idx == 0) ? STEPPER_COMMANDQUEUELENGTH-1 : idx-1;
+
+			directionCurrent = state[stepperIndex].cmdQueue[idxBefore].forward;
+			switch(state[stepperIndex].cmdQueue[idxBefore].cmdType) {
+				case stepperCommand_ConstantSpeed:			cTicksCurrent = state[stepperIndex].cmdQueue[idxBefore].data.constantSpeed.cConst; break;
+				case stepperCommand_AccelerateToSpeed:		cTicksCurrent = state[stepperIndex].cmdQueue[idxBefore].data.accelerateDecelerateToConstSpeed.cEnd; break;
+				case stepperCommand_DecelerateToSpeed:		cTicksCurrent = state[stepperIndex].cmdQueue[idxBefore].data.accelerateDecelerateToConstSpeed.cEnd; break;
+				default:									cTicksCurrent = 0; break;
+			}
+		}
+	}
+
+	/*
+		Clamp ticks to minimum values
+	*/
+	if((cTicksCurrent > minTicks) || (cTicksCurrent <= 0)) {
+		cTicksCurrent = minTicks;
+	}
+	if((cTicksEnd > minTicks) || (cTicksEnd <= 0)) {
+		cTicksEnd = minTicks;
+	}
+
+	if(v == 0) { direction = directionCurrent; }
+
+	if(directionCurrent != direction) {
+		/* First we have to stop ... */
+		state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_DecelerateToSpeed;
+		state[stepperIndex].cmdQueue[idx].forward = directionCurrent;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.c8 = state[stepperIndex].constants.c8;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.c9 = state[stepperIndex].constants.c9;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.cEnd = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.cStart = cTicksCurrent;
+
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nA = 0;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nD = -1.0 * (state[stepperIndex].constants.c10 * state[stepperIndex].constants.c10) / (cTicksCurrent * cTicksCurrent) * state[stepperIndex].constants.c3;
+
+		/* And then we have to accelerate into the correct direction */
+		const int idx2 = (idx + 1) % STEPPER_COMMANDQUEUELENGTH;
+		state[stepperIndex].cmdQueue[idx2].cmdType = stepperCommand_AccelerateToSpeed;
+		state[stepperIndex].cmdQueue[idx2].forward = direction;
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.c8 = state[stepperIndex].constants.c8;
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.c9 = state[stepperIndex].constants.c9;
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.cStart = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.cEnd = cTicksEnd;
+
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.nA = v*v * state[stepperIndex].constants.c1;
+		state[stepperIndex].cmdQueue[idx2].data.accelerateDecelerateToConstSpeed.nD = 0;
+
+		/*
+			Make command active
+		*/
+		if(immediate) {
+			state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+			state[stepperIndex].c_i = -1;
+		}
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 2) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.c8 = state[stepperIndex].constants.c8;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.c9 = state[stepperIndex].constants.c9;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.cEnd = cTicksEnd;
+		state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.cStart = cTicksCurrent;
+		state[stepperIndex].cmdQueue[idx].forward = direction;
+
+		if(cTicksEnd < cTicksCurrent) {
+			/*
+				Accelerate
+			*/
+			double nA = (v*v - (state[stepperIndex].constants.c10 * state[stepperIndex].constants.c10) / (cTicksCurrent * cTicksCurrent)) * state[stepperIndex].constants.c1;
+
+			state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_AccelerateToSpeed;
+			state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nA = nA;
+			state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nD = 0;
+		} else if(cTicksEnd > cTicksCurrent) {
+			/*
+				Decelerate
+			*/
+			double nD = (v * v - (state[stepperIndex].constants.c10 * state[stepperIndex].constants.c10) / (cTicksCurrent * cTicksCurrent)) * state[stepperIndex].constants.c3;
+
+			state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_DecelerateToSpeed;
+			state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nA = 0;
+			state[stepperIndex].cmdQueue[idx].data.accelerateDecelerateToConstSpeed.nD = nD;
+		}
+
+		/*
+			Make command active
+		*/
+		if(immediate) {
+			state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+			state[stepperIndex].c_i = -1;
+		}
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+}
 
 /*
 	==============================
@@ -1051,7 +1267,27 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_Queue_ConstSpeedAccel:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double constSpeed = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(constSpeed < 0) {
+					stepperPlanSpeedChange(channel, -1.0*constSpeed, 0, false);
+				} else {
+					stepperPlanSpeedChange(channel, constSpeed, 1, false);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Queue_Hold:
 			{
@@ -1126,7 +1362,27 @@ static void i2cMessageLoop() {
 			}
 			break;
 		case i2cCmd_Exec_ConstSpeedAccel:
-			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2+4) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double constSpeed = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				if(constSpeed < 0) {
+					stepperPlanSpeedChange(channel, -1.0*constSpeed, 0, true);
+				} else {
+					stepperPlanSpeedChange(channel, constSpeed, 1, true);
+				}
+
+				/* Done */
+			}
 			break;
 		case i2cCmd_Exec_Hold:
 			{
