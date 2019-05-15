@@ -16,10 +16,10 @@ Since the controller uses I2C it can be controlled from 3.3V and 5V
 devices without any level shifters (if pullups are only present to 3.3V
 but not 5V vcc).
 
-__The controller is currently work in progress__
+__The controller is currently work in progress (but usable). Functions that
+have been tested won't change behaviour__
 
-The stepper driver can be controlled via I2C (__work in progress__) and
-supports:
+The stepper driver can be controlled via I2C and supports:
 
 * Running at a constant speed
 * Accelerated linear movement from one position to another
@@ -62,16 +62,22 @@ Additional features:
 | i2cCmd_Queue_Sync  				|  |  |  Sync. point; 1 Byte Channel | |
 | i2cCmd_Queue_ConstSpeed  			|  Y | Y |  Constant speed; 1 Byte Channel; 4 Byte Speed | |
 | i2cCmd_Queue_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position | |
-| i2cCmd_Queue_ConstSpeedAccel  	|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
+| i2cCmd_Queue_ConstSpeedAccel  	| Y | Y |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
 | i2cCmd_Queue_Hold  				|  Y | Y |  Hold position; 1 byte channel | |
 | i2cCmd_Queue_DisableDrv  			|  Y | Y |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) | |
 | Group 3: Execute commands immedately |
 | i2cCmd_Exec_Sync  				|  |  |  Sync. point; 1 Byte Channel | |
 | i2cCmd_Exec_ConstSpeed  			|  Y | Y |  Constant speed; 1 Byte Channel; 4 Byte Speed | |
 | i2cCmd_Exec_MoveTo  				|  Y | Y |  Move To (accelerated); 1 Byte Channel; 4 Byte Position | |
-| i2cCmd_Exec_ConstSpeedAccel  		|  |  |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
+| i2cCmd_Exec_ConstSpeedAccel  		| Y | Y |  Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed | |
 | i2cCmd_Exec_Hold  				|  Y | Y |  Hold position; 1 byte channel | |
 | i2cCmd_Exec_DisableDrv  			|  Y | Y |  Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) | |
 | Group F: Emergency commands |
 | i2cCmd_EmergencyStop  			|  Y |  |  Keeps motors engaged but stopped | Drivers stay engaged so current will keep flowing |
 | i2cCmd_EmergencyOff  				|  Y |  |  Keeps motors disabled | Since drivers are disabled motors are free to turn freely (inertia!) |
+
+## Host library
+
+The host library (controller) has been currenty implemented and tested
+on FreeBSD (especially on the RaspberryPi platform). Example usage can
+be seen in the ```controller/tests``` directory.
