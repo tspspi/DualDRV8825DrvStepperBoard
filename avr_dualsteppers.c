@@ -927,6 +927,7 @@ enum i2cCommand {
 	i2cCmd_Exec_ConstSpeed				= 0x31,	/* Constant speed; 1 Byte Channel; 4 Byte Speed */
 	i2cCmd_Exec_MoveTo					= 0x32,	/* Move To (accelerated); 1 Byte Channel; 4 Byte Position */
 	i2cCmd_Exec_ConstSpeedAccel			= 0x33,	/* Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed */
+	i2cCmd_Exec_MoveToAbsolute			= 0x34, /* Accelerated move to absolute position (passed in angular position) */
 	i2cCmd_Exec_Hold					= 0x3E,	/* Hold position; 1 byte channel */
 	i2cCmd_Exec_DisableDrv				= 0x3F,	/* Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) */
 
@@ -1490,6 +1491,25 @@ static void i2cMessageLoop() {
 					stepperPlanSpeedChange(channel, constSpeed, 1, true);
 				}
 
+				/* Done */
+			}
+			break;
+		case i2cCmd_Exec_MoveToAbsolute:
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double stepAccelDecel = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
 				/* Done */
 			}
 			break;

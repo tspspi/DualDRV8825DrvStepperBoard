@@ -33,6 +33,8 @@ typedef enum i2cDualStepperError (*i2cDualStepper_GetAlpha)(struct i2cDualSteppe
 typedef enum i2cDualStepperError (*i2cDualStepper_SetAlpha)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double alpha);
 typedef enum i2cDualStepperError (*i2cDualStepper_GetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, unsigned int* lpSteps);
 typedef enum i2cDualStepperError (*i2cDualStepper_SetMicrosteps)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, unsigned int steps);
+typedef enum i2cDualStepperError (*i2cDualStepper_SetAbsolutePosition)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double position);
+typedef enum i2cDualStepperError (*i2cDualStepper_GetAbsolutePosition)(struct i2cDualStepper* lpSelf, unsigned long int dwChannel, double *lpPosition);
 
 typedef enum i2cDualStepperError (*i2cDualStepper_GetFault)(struct i2cDualStepper* lpSelf, uint8_t* lpFaultBits);
 
@@ -44,6 +46,7 @@ typedef enum i2cDualStepperError (*i2cDualStepper_Queue_Sync)(struct i2cDualStep
 typedef enum i2cDualStepperError (*i2cDualStepper_Queue_ConstantSpeed)(struct i2cDualStepper* lpSelf, unsigned long int channel, double speed);
 typedef enum i2cDualStepperError (*i2cDualStepper_Queue_MoveAngularDistance)(struct i2cDualStepper* lpSelf, unsigned long int channel, double distance);
 typedef enum i2cDualStepperError (*i2cDualStepper_Queue_AccelerateToSpeed)(struct i2cDualStepper* lpSelf, unsigned long int channel, double targetSpeed);
+typedef enum i2cDualStepperError (*i2cDualStepper_Queue_MoveToAbsolute)(struct i2cDualStepper* lpSelf, unsigend long int channel, double target);
 typedef enum i2cDualStepperError (*i2cDualStepper_Queue_Hold)(struct i2cDualStepper* lpSelf, unsigned long int channel);
 typedef enum i2cDualStepperError (*i2cDualStepper_Queue_DisableDriver)(struct i2cDualStepper* lpSelf, unsigned long int channel);
 
@@ -51,6 +54,7 @@ typedef enum i2cDualStepperError (*i2cDualStepper_Exec_Sync)(struct i2cDualStepp
 typedef enum i2cDualStepperError (*i2cDualStepper_Exec_ConstantSpeed)(struct i2cDualStepper* lpSelf, unsigned long int channel, double speed);
 typedef enum i2cDualStepperError (*i2cDualStepper_Exec_MoveAngularDistance)(struct i2cDualStepper* lpSelf, unsigned long int channel, double distance);
 typedef enum i2cDualStepperError (*i2cDualStepper_Exec_AccelerateToSpeed)(struct i2cDualStepper* lpSelf, unsigned long int channel, double targetSpeed);
+typedef enum i2cDualStepperError (*i2cDualStepper_Exec_MoveToAbsolute)(struct i2cDualStepper* lpSelf, unsigend long int channel, double target);
 typedef enum i2cDualStepperError (*i2cDualStepper_Exec_Hold)(struct i2cDualStepper* lpSelf, unsigned long int channel);
 typedef enum i2cDualStepperError (*i2cDualStepper_Exec_DisableDriver)(struct i2cDualStepper* lpSelf, unsigned long int channel);
 
@@ -68,6 +72,8 @@ struct i2cDualStepper_VTBL {
 	i2cDualStepper_SetAlpha							setAlpha;
 	i2cDualStepper_GetMicrosteps					getMicrosteps;
 	i2cDualStepper_SetMicrosteps					setMicrosteps;
+	i2cDualStepper_SetAbsolutePosition				setAbsolutePosition;
+	i2cDualStepper_GetAbsolutePosition				getAbsolutePosition;
 	i2cDualStepper_GetFault							getFault;
 	i2cDualStepper_RecalculateConstants				recalculateConstants;
 
@@ -77,6 +83,7 @@ struct i2cDualStepper_VTBL {
 	i2cDualStepper_Queue_ConstantSpeed				queueConstantSpeed;
 	i2cDualStepper_Queue_MoveAngularDistance		queueMoveAngularDistance;
 	i2cDualStepper_Queue_AccelerateToSpeed			queueAccelerateToSpeed;
+	i2cDualStepper_Queue_MoveToAbsolute				queueMoveToAbsolute;
 	i2cDualStepper_Queue_Hold						queueHold;
 	i2cDualStepper_Queue_DisableDriver				queueDisableDriver;
 
@@ -84,6 +91,7 @@ struct i2cDualStepper_VTBL {
 	i2cDualStepper_Exec_ConstantSpeed				execConstantSpeed;
 	i2cDualStepper_Exec_MoveAngularDistance			execMoveAngularDistance;
 	i2cDualStepper_Exec_AccelerateToSpeed			execAccelerateToSpeed;
+	i2cDualStepper_Exec_MoveToAbsolute				execMoveToAbsolute;
 	i2cDualStepper_Exec_Hold						execHold;
 	i2cDualStepper_Exec_DisableDriver				execDisableDriver;
 

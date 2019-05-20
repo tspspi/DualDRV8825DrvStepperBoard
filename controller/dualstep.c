@@ -235,6 +235,49 @@ static enum i2cDualStepperError i2cDual_SetMicrosteps(
 
 	return i2cDualStepperErrorE_Ok;
 }
+static enum i2cDualStepperError i2cDual_GetAbsolutePosition(
+	struct i2cDualStepper* lpSelf,
+	unsigned long int dwChannel,
+	double* lpPosition
+) {
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(dwChannel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2] = { i2cCmd_GetAbsolutePosition, (uint8_t)dwChannel };
+	uint8_t resp[4];
+
+	/* Perform query */
+	i2e = i2cWriteRead(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req), resp, sizeof(resp));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	if(lpAlpha != NULL) { (*lpPosition) = (double)deserializeIEEE754SingleFloat_4Bytes(&(resp[0])); }
+
+	return i2cDualStepperErrorE_Ok;
+}
+static enum i2cDualStepperError i2cDual_SetAbsolutePosition(
+	struct i2cDualStepper* lpSelf,
+	unsigned long int dwChannel,
+	double position
+) {
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(dwChannel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2+4];
+	req[0] = i2cCmd_SetAbsolutePosition;
+	req[1] = (uint8_t)dwChannel;
+
+	serializeIEEE754SingleFloat_4Bytes((float)position, &(req[2]));
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
+}
+
 
 static enum i2cDualStepperError i2cDual_GetFault(
 	struct i2cDualStepper* lpSelf,
@@ -366,6 +409,27 @@ static enum i2cDualStepperError i2cDual_Queue_AccelerateToSpeed(
 
 	return i2cDualStepperErrorE_Ok;
 }
+static enum i2cDualStepperError i2cDual_Queue_MoveToAbsolute(
+	struct i2cDualStepper* lpSelf,
+	unsigned long int channel,
+	double position
+) {
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2+4];
+	req[0] = i2cCmd_Queue_MoveToAbsolute;
+	req[1] = (uint8_t)channel;
+
+	serializeIEEE754SingleFloat_4Bytes((float)position, &(req[2]));
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
+}
 static enum i2cDualStepperError i2cDual_Queue_Hold(
 	struct i2cDualStepper* lpSelf,
 	unsigned long int channel
@@ -473,6 +537,27 @@ static enum i2cDualStepperError i2cDual_Exec_AccelerateToSpeed(
 
 	return i2cDualStepperErrorE_Ok;
 }
+static enum i2cDualStepperError i2cDual_Exec_MoveToAbsolute(
+	struct i2cDualStepper* lpSelf,
+	unsigned long int channel,
+	double position
+) {
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+	if(channel > 1) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[2+4];
+	req[0] = i2cCmd_Exec_MoveToAbsolute;
+	req[1] = (uint8_t)channel;
+
+	serializeIEEE754SingleFloat_4Bytes((float)position, &(req[2]));
+
+	i2e = i2cWrite(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	return i2cDualStepperErrorE_Ok;
+}
 static enum i2cDualStepperError i2cDual_Exec_Hold(
 	struct i2cDualStepper* lpSelf,
 	unsigned long int channel
@@ -553,6 +638,8 @@ static struct i2cDualStepper_VTBL defaultStepperVTBL = {
 	&i2cDual_SetAlpha,
 	&i2cDual_GetMicrosteps,
 	&i2cDual_SetMicrosteps,
+	&i2cDual_SetAbsolutePosition,
+	&i2cDual_GetAbsolutePosition,
 	&i2cDual_GetFault,
 	&i2cDual_RecalculateConstants,
 
@@ -562,6 +649,7 @@ static struct i2cDualStepper_VTBL defaultStepperVTBL = {
 	&i2cDual_Queue_ConstantSpeed,
 	&i2cDual_Queue_MoveAngularDistance,
 	&i2cDual_Queue_AccelerateToSpeed,
+	&i2cDual_Queue_MoveToAbsolute,
 	&i2cDual_Queue_Hold,
 	&i2cDual_Queue_DisableDriver,
 
@@ -569,6 +657,7 @@ static struct i2cDualStepper_VTBL defaultStepperVTBL = {
 	&i2cDual_Exec_ConstantSpeed,
 	&i2cDual_Exec_MoveAngularDistance,
 	&i2cDual_Exec_AccelerateToSpeed,
+	&i2cDual_Exec_MoveToAbsolute,
 	&i2cDual_Exec_Hold,
 	&i2cDual_Exec_DisableDriver,
 

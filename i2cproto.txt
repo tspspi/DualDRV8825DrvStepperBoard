@@ -20,6 +20,8 @@ I2C Protocol for Stepper controller:
 						1/64 (unsup)		6
 						1/128 (unsup)		7
 			0x08		Set Microstepping configuration (see above); Normally SHARED!
+			0x09		Set absolute position (4 byte IEEE single float; Little endian)
+			0x0A		Get absolute position (4 byte IEEE single float; Little endian)
 			...
 			0x0E		Get FAULT bits (resets fault latch) - Returns a single bit with 1 bit per channel
 					Bit 0 corresponds to channel 0, Bit 1 to channel 1, etc.
