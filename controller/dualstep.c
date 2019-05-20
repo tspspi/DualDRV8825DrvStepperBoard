@@ -240,8 +240,20 @@ static enum i2cDualStepperError i2cDual_GetFault(
 	struct i2cDualStepper* lpSelf,
 	uint8_t* lpFaultBits
 ) {
-	/* TODO */
-	return i2cDualStepperErrorE_NotImplemented;
+	enum i2cError i2e;
+
+	if(lpSelf == NULL) { return i2cDualStepperErrorE_InvalidParam; }
+
+	uint8_t req[1];
+	uint8_t resp[1];
+	req[0] = i2cCmd_GetFault;
+
+	i2e = i2cWriteRead(lpSelf->i2cBus, lpSelf->devAddr, req, sizeof(req), resp, sizeof(resp));
+	if(i2e != i2cE_Ok) { return i2cDualStepperErrorE_IOError; }
+
+	if(lpFaultBits != NULL) { (*lpFaultBits) = resp[0]; }
+
+	return i2cDualStepperErrorE_Ok;
 }
 static enum i2cDualStepperError i2cDual_RecalculateConstants(
 	struct i2cDualStepper* lpSelf,
