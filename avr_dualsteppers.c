@@ -651,6 +651,54 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 	return;
 }
 
+static void stepperPlanMovement_AccelerateStopToStopAbsolute(int stepperIndex, double sPosition, bool immediate) {
+	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+	const int idx = state[stepperIndex].cmdQueueHead;
+
+	/* Get current position */
+	long int posCur = state[stepperIndex].currentPosition;
+
+	/* Calculate target position in steps */
+	long int posTarget = sPosition / state[stepperIndex].settings.alpha;
+	double nTotal;
+	if(posTarget > posCur) {
+		nTotal = posTarget - posCur;
+		state[stepperIndex].cmdQueue[idx].forward = 1;
+	} else {
+		nTotal = posCur - posTarget;
+		state[stepperIndex].cmdQueue[idx].forward = 0;
+	}
+
+	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_AccelerateStopToStop;
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = state[stepperIndex].constants.c2;
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = state[stepperIndex].constants.c4;
+
+	uint32_t nTP = state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA + state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD;
+	if(nTP < nTotal) {
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nC = nTotal - nTP;
+	} else {
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = nTotal * state[stepperIndex].constants.c5;
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = nTotal - state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA;
+	}
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c7 = state[stepperIndex].constants.c7;
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c8 = state[stepperIndex].constants.c8;
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c9 = state[stepperIndex].constants.c9;
+
+	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.initialDelayTicks = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
+
+	/*
+		Make command active
+	*/
+	if(immediate) {
+		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+		state[stepperIndex].c_i = -1;
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	} else {
+		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	}
+	return;
+}
+
 static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
@@ -856,7 +904,8 @@ enum i2cCommand {
 	i2cCmd_SetAlpha						= 0x06,	/* 4 Byte payload Master -> Slave */
 	i2cCmd_GetMicrostepping				= 0x07, /* 1 Byte payload Slave -> Master (2x 3 Bit) + 1 Byte Status */
 	i2cCmd_SetMicrostepping				= 0x08, /* 1 Byte payload Master -> Slave */
-
+	i2cCmd_SetAbsolutePosition			= 0x09, /* 4 Byte payload Master -> Slave */
+	i2cCmd_GetAbsolutePosition			= 0x0A, /* 4 Byte payload Slave -> Master */
 	i2cCmd_GetFault						= 0x0E, /* 1 Byte payload Master -> Slave (IS status) */
 	i2cCmd_RecalculateConstants			= 0x0F, /* Used to trigger recalculation of all constants (expensive operation; system should be stopped) */
 
@@ -870,6 +919,7 @@ enum i2cCommand {
 	i2cCmd_Queue_ConstSpeed				= 0x21,	/* Constant speed; 1 Byte Channel; 4 Byte Speed */
 	i2cCmd_Queue_MoveTo					= 0x22,	/* Move To (accelerated); 1 Byte Channel; 4 Byte Position */
 	i2cCmd_Queue_ConstSpeedAccel		= 0x23,	/* Constant speed with acceleration/deceleration; 1 Byte channel; 4 Byte speed */
+	i2cCmd_Queue_MoveToAbsolute			= 0x24, /* Accelerated move to absolute position (passed in angular position) */
 	i2cCmd_Queue_Hold					= 0x2E,	/* Hold position; 1 byte channel */
 	i2cCmd_Queue_DisableDrv				= 0x2F,	/* Disable drivers; 1 byte channel (both have to be ordered to disable to be effective) */
 
@@ -1180,6 +1230,46 @@ static void i2cMessageLoop() {
 				stepperSetMicrostepping(microstepNew);
 			}
 			break;
+		case i2cCmd_SetAbsolutePosition:
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double absPosition = i2cRXDouble();
+
+				if(channel < 2) {
+					state[channel].currentPosition = absPosition / state[channel].settings.alpha;
+				}
+				/* Done */
+			}
+			break;
+		case i2cCmd_GetAbsolutePosition:
+			{
+				/*
+					Two byte command that allows reading of 4 bytes representing currently configured
+					alpha value of selected channel
+				*/
+				if(rcvBytes < 2) {
+					return; /* Command not fully received until now */
+				}
+				if(txAvail < 4) {
+					/* Command is NOT satisfyable. Just skip ... */
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					return;
+				}
+				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+				double curPos = (channel < 2) ? state[channel].currentPosition * state[channel].settings.alpha : 1.0e38;
+
+				/* Encode IEEE float to 4 byte sequence in little endian */
+				i2cTXDouble(curPos);
+
+				/* Done */
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+			}
+			break;
 		case i2cCmd_GetFault:
 			{
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
@@ -1263,6 +1353,25 @@ static void i2cMessageLoop() {
 				} else {
 					stepperPlanMovement_AccelerateStopToStop(channel, stepAccelDecel, 1, false);
 				}
+				/* Done */
+			}
+			break;
+		case i2cCmd_Queue_MoveToAbsolute:
+			{
+				if(rcvBytes < 2+4) {
+					return; /* Command not fully received */
+				}
+
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+				double stepAccelDecel = i2cRXDouble();
+
+				if(channel >= 2) {
+					return; /* Ignore non existing channels */
+				}
+
+				stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
 				/* Done */
 			}
 			break;

@@ -34,7 +34,7 @@ I2C Protocol for Stepper controller:
 			0x20		Enqueue "sync point" on specified stepper (1 byte). Only if both steppers execute a
 					synchronization point the command queue advances. Allows to synchronize stepper operation.
 					Ex.: 0x20 0x00 or 0x20 0x01 for first or second stepper
-			0x21		Enqueue move constant speed. Expects Stepper index and direction in first byte; 
+			0x21		Enqueue move constant speed. Expects Stepper index and direction in first byte;
 					(Bit 7 is direction; Bits 0-6 are stepper index) then 4 bytes IEEE float that specifies
 					angular speed (rad / sec)
 					Will never finish; Need group 3 or F to leave
@@ -45,6 +45,9 @@ I2C Protocol for Stepper controller:
 			0x23		Set constant speed with acceleration / deceleration; hold speed afterwards (no return)
 					Will never finish; Need group 3 or F to leave
 					Same as 0x21 but with acceleration ...
+			0x24		Set position (absolute). This is - incontrast to 0x22 which is a relative start-to-stop
+					movement - calculated relative to the current angular position. The coordinates are passed
+					as angular position (radians)
 			...
 			0x2E		Hold position (normally not required; Eventually required after "Disable driver" has
 					been used to re-enable the drivers; sufficient to execute on one for non-common control pins
@@ -59,4 +62,3 @@ I2C Protocol for Stepper controller:
 
 			0xFE		Emergency stop (Stops all motors and KEEPS ENGAGED - motors will be "locked")
 			0xFF		Emergency off (Stops all motors and DISABLED DRIVERS - motors will "free wheel")
-
