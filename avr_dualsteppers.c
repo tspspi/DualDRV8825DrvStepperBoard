@@ -217,6 +217,16 @@ static uint8_t						drvRealEnabled;
 bool bResetRun = false;
 static volatile bool bIntTriggered = false;
 
+/*@
+	requires \valid(&PORTC) && \valid(&PORTD);
+
+	ensures
+		\forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+	ensures
+		\forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueTail >= 0) && (state[iStep].cmdQueueTail < STEPPER_COMMANDQUEUELENGTH);
+*/
 static void handleTimer2Interrupt() {
 	if(!bIntTriggered) {
 		return;
@@ -414,17 +424,25 @@ static void handleTimer2Interrupt() {
 				// Pulse PD2 high
 				PORTD = PORTD | 0x08;
 				if((PORTD & 0x04) != 0) {
-					state[0].currentPosition++;
+					if(state[0].currentPosition < 2147483647) {
+						state[0].currentPosition++;
+					}
 				} else {
-					state[0].currentPosition--;
+					if(state[0].currentPosition > 0) {
+						state[0].currentPosition--;
+					}
 				}
 			} else {
 				// Pulse PC1 high
 				PORTC = PORTC | 0x02;
 				if((PORTC & 0x01) != 0) {
-					state[1].currentPosition++;
+					if(state[1].currentPosition < 2147483647) {
+						state[1].currentPosition++;
+					}
 				} else {
-					state[1].currentPosition--;
+					if(state[1].currentPosition > 0) {
+						state[1].currentPosition--;
+					}
 				}
 			}
 		}
@@ -436,6 +454,11 @@ ISR(TIMER2_COMPA_vect) {
 	bIntTriggered = true;
 }
 
+/*@
+	requires \valid_read(&PINC);
+
+	assigns stateFault;
+*/
 ISR(PCINT1_vect) {
 	/*
 		Update fault pins ...
@@ -468,6 +491,9 @@ static bool updateConstants(int stepperIndex) {
 	return true;
 }
 
+/*@
+	requires \valid(&PORTB) && \valid(&PORTD);
+*/
 static void stepperSetMicrostepping(uint8_t microsteps) {
 	/*
 		pinMode0    8	PB0		OUT
@@ -496,6 +522,13 @@ static void stepperSetMicrostepping(uint8_t microsteps) {
 	}
 }
 
+/*@
+	requires \valid(&TCCR2B) && \valid(&TCNT2) && \valid(&TCCR2A) && \valid(&OCR2A) && \valid(&TIMSK2);
+	requires \valid(&PORTB) && \valid(&DDRB);
+	requires \valid(&PORTC) && \valid(&DDRC) && \valid(&PINC);
+	requires \valid(&PORTD) && \valid(&DDRD);
+	requires \valid(&PCICR) && \valid(&PCMSK1);
+*/
 static void stepperSetup() {
 	/*
 		Stop our timer if it's currently running
@@ -960,6 +993,16 @@ static volatile int i2cBuffer_TX_Tail = 0;
 	messages are handeled from the main loop which is
 	always interruptable by the interrupt handlers.
 */
+/*@
+	requires i2cBuffer_RX_Head >= 0;
+	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+
+	assigns i2cBuffer_RX_Head;
+	assigns i2cBuffer_RX[i2cBuffer_RX_Head];
+
+	ensures i2cBuffer_RX_Head >= 0;
+	ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+*/
 static inline void i2cEventReceived(uint8_t data) {
 	// Do whatever we want with the received data
 	if(((i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX) == i2cBuffer_RX_Tail) {
@@ -973,6 +1016,16 @@ static inline void i2cEventBusError() {
 	// Currently we force a reset by using the watchdog after 1s delay
 	return;
 }
+/*@
+	requires i2cBuffer_TX_Tail >= 0;
+	requires i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+
+	assigns i2cBuffer_TX_Tail;
+	assigns i2cBuffer_TX[i2cBuffer_TX_Tail];
+
+	ensures i2cBuffer_TX_Tail >= 0;
+	ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+*/
 static inline uint8_t i2cEventTransmit() {
 	if(i2cBuffer_TX_Head == i2cBuffer_TX_Tail) {
 		/* Empty buffer - buffer underrun ... ToDo */
@@ -994,6 +1047,11 @@ static void i2cSlaveInit(uint8_t address) {
 	return;
 }
 
+/*@
+	requires \valid_read(&TWSR) && \valid_read(&TWDR) && \valid(&TWDR) && \valid(&TWCR);
+
+	ensures TWCR == 0xC5;
+*/
 ISR(TWI_vect) {
 	switch(TW_STATUS) { /* Note: TW_STATUS is an macro that masks status bits from TWSR) */
 		case TW_SR_SLA_ACK:
@@ -1073,6 +1131,25 @@ static inline double i2cRXDouble() {
 	return d.f;
 }
 
+/*@
+	requires i2cBuffer_TX_Tail >= 0;
+	requires i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+	requires i2cBuffer_TX_Head >= 0;
+	requires i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
+	requires i2cBuffer_RX_Tail >= 0;
+	requires i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
+	requires i2cBuffer_RX_Head >= 0;
+	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+
+	ensures i2cBuffer_TX_Tail >= 0;
+        ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+        ensures i2cBuffer_TX_Head >= 0;
+        ensures i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
+        ensures i2cBuffer_RX_Tail >= 0;
+        ensures i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
+        ensures i2cBuffer_RX_Head >= 0;
+        ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+*/
 static void i2cMessageLoop() {
 	uint8_t rcvBytes = (i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
 
@@ -1138,7 +1215,7 @@ static void i2cMessageLoop() {
 				/*
 					Two byte command that allows reading of 4 bytes representing currently configured
 					maximum speed of selected channel
-				*/
+					*/
 				if(rcvBytes < 2) {
 					return; /* Command not fully received until now */
 				}
@@ -1730,6 +1807,13 @@ void delayMicros(unsigned int microDelay) {
 	return;
 }
 
+/*@
+	requires \valid(&TCCR0A) && \valid(&TCCR0B) && \valid(&TIMSK0);
+	requires \valid(&PORTB) && \valid(&DDRB);
+	requires \valid(&UCSR0B);
+
+	ensures UCSR0B == 0;
+*/
 int main() {
 	cli();
 
