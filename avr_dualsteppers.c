@@ -249,6 +249,12 @@ static void handleTimer2Interrupt() {
 		out state. We have to finish in way less then 1024 ticks ...
 	*/
 	int stepperIdx;
+	/*@
+		loop assigns PORTD, PORTC;
+		loop assigns drvRealEnabled, drvEnableState;
+		loop assigns state[0 .. (STEPPER_COUNT-1)];
+
+	*/
 	for(stepperIdx = 0; stepperIdx < STEPPER_COUNT; stepperIdx = stepperIdx + 1) {
 		if(bResetRun) {
 			if(stepperIdx == 0) {
@@ -568,6 +574,9 @@ static void stepperSetup() {
 		Initialize stepper state machine to zero
 	*/
 	int i;
+	/*@
+		loop assigns state[0 .. (STEPPER_COUNT-1)];
+	*/
 	for(i = 0; i < STEPPER_COUNT; i=i+1) {
 		state[i].cmdQueueHead = 0;
 		state[i].cmdQueueTail = 0;
@@ -1141,6 +1150,9 @@ static inline double i2cRXDouble() {
 	requires i2cBuffer_RX_Head >= 0;
 	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 
+	assigns	i2cBuffer_TX_Tail, i2cBuffer_TX_Head;
+	assigns i2cBuffer_RX_Tail, i2cBuffer_RX_Head;
+
 	ensures i2cBuffer_TX_Tail >= 0;
         ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
         ensures i2cBuffer_TX_Head >= 0;
@@ -1698,6 +1710,10 @@ unsigned long int millis() {
 	return m;
 }
 
+/*@
+	requires \valid(&SREG);
+	assigns SREG;
+*/
 unsigned long int micros() {
 	uint8_t srOld = SREG;
 	unsigned long int overflowCounter;
@@ -1719,15 +1735,27 @@ unsigned long int micros() {
 	return ((overflowCounter << 8) + timerCounter) * (64L / (F_CPU / 1000000L));
 }
 
+/*@
+	requires millisecs >= 0;
+	requires \valid(&SREG);
+	assigns SREG;
+*/
 void delay(unsigned long millisecs) {
-	uint16_t lastMicro;
+	//uint16_t lastMicro;
+	unsigned int lastMicro;
 	/*
 		Busy waiting the desired amount of milliseconds ... by
 		polling mircos
 	*/
-	lastMicro = (uint16_t)micros();
+	lastMicro = (unsigned int)micros();
+	/*@
+		loop assigns lastMicro;
+		loop assigns millisecs;
+	*/
 	while(millisecs > 0) {
-		if(((uint16_t)micros() - lastMicro) >= 1000) {
+		// uint16_t curMicro = (uint16_t)micros();
+		unsigned int curMicro = micros();
+		if(curMicro - lastMicro >= 1000)  {
 			/* Every ~ thousand microseconds tick ... */
 			lastMicro = lastMicro + 1000;
 			millisecs = millisecs - 1;
