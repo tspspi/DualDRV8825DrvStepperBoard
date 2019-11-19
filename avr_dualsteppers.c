@@ -220,6 +220,11 @@ static volatile bool bIntTriggered = false;
 /*@
 	requires \valid(&PORTC) && \valid(&PORTD);
 
+	assigns drvRealEnabled;
+	assigns bIntTriggered;
+
+	assigns PORTC, PORTD;
+
 	ensures
 		\forall integer iStep; 0 <= iStep < STEPPER_COUNT
 		==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
@@ -473,11 +478,30 @@ ISR(PCINT1_vect) {
 	stateFault = stateFault | (((faultPins >> 2) & 0x01) ^ 0x01) | (((faultPins >> 2) & 0x02) ^ 0x02);
 }
 
+/*@
+	behavior unknownChannel:
+		requires stepperIndex >= STEPPER_COUNT;
+		assigns \nothing;
+	behavior knownChannel:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		assigns state[stepperIndex].constants.c1,
+		 	state[stepperIndex].constants.c2,
+			state[stepperIndex].constants.c3,
+			state[stepperIndex].constants.c4,
+			state[stepperIndex].constants.c5,
+			state[stepperIndex].constants.c6,
+			state[stepperIndex].constants.c7,
+			state[stepperIndex].constants.c8,
+			state[stepperIndex].constants.c9,
+			state[stepperIndex].constants.c10;
+	disjoint behaviors;
+	complete behaviors;
+*/
 static bool updateConstants(int stepperIndex) {
 	/*
 		Expensive update of constants for motion planner
 	*/
-	if(stepperIndex > STEPPER_COUNT) {
+	if(stepperIndex >= STEPPER_COUNT) {
 		return false;
 	}
 
@@ -491,14 +515,27 @@ static bool updateConstants(int stepperIndex) {
 	state[stepperIndex].constants.c8 = state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
 	state[stepperIndex].constants.c9 = state[stepperIndex].settings.deceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
 	state[stepperIndex].constants.c10 = state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
-/*	state[stepperIndex].constants.c11 = ((double)STEPPER_TIMERTICK_FRQ)*((double)STEPPER_TIMERTICK_FRQ) / (2.0 * state[stepperIndex].settings.acceleration);
-	state[stepperIndex].constants.c12 = ((double)STEPPER_TIMERTICK_FRQ)*((double)STEPPER_TIMERTICK_FRQ) / (2.0 * state[stepperIndex].settings.deceleration); */
 
 	return true;
 }
 
 /*@
 	requires \valid(&PORTB) && \valid(&PORTD);
+
+	behavior supportedMicrosteps:
+		requires (microsteps == 0) || (microsteps == 2) || (microsteps == 4)
+			|| (microsteps == 8) || (microsteps == 16) || (microsteps == 32);
+
+		assigns PORTB;
+		assigns PORTD;
+		assigns stateMicrostepping;
+
+		ensures stateMicrostepping == microsteps;
+	behavior unsupportedMicrosteps:
+		requires (microsteps != 0) && (microsteps != 2) && (microsteps != 4)
+			&& (microsteps != 8) && (microsteps != 16) && (microsteps != 32);
+	disjoint behaviors;
+	complete behaviors;
 */
 static void stepperSetMicrostepping(uint8_t microsteps) {
 	/*
@@ -618,8 +655,35 @@ static void stepperSetup() {
 	#endif
 }
 
+/*@
+	behavior unknownStepper:
+		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assigns \nothing;
+	behavior knownStepperImmediate:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate != 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.constantSpeed.cConst;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+		ensures state[stepperIndex].c_i == -1;
+	behavior knownStepperPlanned:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate == 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.constantSpeed.cConst;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+*/
 static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction, bool immediate) {
-	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+	if((stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT)) { return; }
 
 	/*
 		Determine at which index we want to plan
@@ -655,6 +719,45 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 	return;
 }
 
+/*@
+	behavior unknownStepper:
+		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assigns \nothing;
+	behavior knownStepperImmediate:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate != 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+		ensures state[stepperIndex].c_i == -1;
+	behavior knownStepperPlanned:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate == 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+*/
 static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sTotal, int direction, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
@@ -696,6 +799,44 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 	return;
 }
 
+/*@
+	behavior unknownStepper:
+		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assigns \nothing;
+	behavior knownStepperImmediate:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate != 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+		ensures state[stepperIndex].c_i == -1;
+	behavior knownStepperPlanned:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate == 0;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+		assigns state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+*/
 static void stepperPlanMovement_AccelerateStopToStopAbsolute(int stepperIndex, double sPosition, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 	const int idx = state[stepperIndex].cmdQueueHead;
@@ -744,6 +885,29 @@ static void stepperPlanMovement_AccelerateStopToStopAbsolute(int stepperIndex, d
 	return;
 }
 
+/*@
+	behavior unknownStepper:
+		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assigns \nothing;
+	behavior knownStepperImmediate:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate != 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+		ensures state[stepperIndex].c_i == -1;
+	behavior knownStepperPlanned:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate == 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+*/
 static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
@@ -765,6 +929,29 @@ static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
 	return;
 }
 
+/*@
+	behavior unknownStepper:
+		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assigns \nothing;
+	behavior knownStepperImmediate:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate != 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+		ensures state[stepperIndex].c_i == -1;
+	behavior knownStepperPlanned:
+		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		requires immediate == 0;
+
+		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+		assigns state[stepperIndex].cmdQueueHead;
+
+		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+*/
 static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
 
@@ -1006,11 +1193,18 @@ static volatile int i2cBuffer_TX_Tail = 0;
 	requires i2cBuffer_RX_Head >= 0;
 	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 
-	assigns i2cBuffer_RX_Head;
-	assigns i2cBuffer_RX[i2cBuffer_RX_Head];
+	behavior bufferOverflow:
+		requires (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX == i2cBuffer_RX_Tail;
+		assigns \nothing;
+	behavior bufferAvail:
+		assigns i2cBuffer_RX_Head;
+		assigns i2cBuffer_RX[i2cBuffer_RX_Head];
 
-	ensures i2cBuffer_RX_Head >= 0;
-	ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+		ensures i2cBuffer_RX_Head >= 0;
+		ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+		ensures i2cBuffer_RX_Head == \old((i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX);
+	disjoint behaviors;
+	complete behaviors;
 */
 static inline void i2cEventReceived(uint8_t data) {
 	// Do whatever we want with the received data
@@ -1021,6 +1215,9 @@ static inline void i2cEventReceived(uint8_t data) {
 	i2cBuffer_RX[i2cBuffer_RX_Head] = data;
 	i2cBuffer_RX_Head = (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 }
+/*@
+	assigns \nothing;
+*/
 static inline void i2cEventBusError() {
 	// Currently we force a reset by using the watchdog after 1s delay
 	return;
@@ -1029,11 +1226,18 @@ static inline void i2cEventBusError() {
 	requires i2cBuffer_TX_Tail >= 0;
 	requires i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
 
-	assigns i2cBuffer_TX_Tail;
-	assigns i2cBuffer_TX[i2cBuffer_TX_Tail];
+	behavior bufferUnderrun:
+		requires i2cBuffer_TX_Head == i2cBuffer_TX_Tail;
+		assigns \nothing;
+	behavior bufferDefault:
+		assigns i2cBuffer_TX_Tail;
+		assigns i2cBuffer_TX[i2cBuffer_TX_Tail];
 
-	ensures i2cBuffer_TX_Tail >= 0;
-	ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+		ensures i2cBuffer_TX_Tail >= 0;
+		ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+		ensures i2cBuffer_TX_Tail == (\old(i2cBuffer_TX_Tail) + 1) % STEPPER_I2C_BUFFERSIZE_TX;
+	complete behaviors;
+	disjoint behaviors;
 */
 static inline uint8_t i2cEventTransmit() {
 	if(i2cBuffer_TX_Head == i2cBuffer_TX_Tail) {
@@ -1046,6 +1250,15 @@ static inline uint8_t i2cEventTransmit() {
 	}
 }
 
+/*@
+	requires \valid(&SREG) && \valid(&TWAR) && \valid(&TWCR);
+
+	assigns SREG;
+	assigns TWAR, TWCR;
+
+	ensures TWCR == 0xC5;
+	ensures (TWAR == address << 1) || (TWAR == ((address << 1) | 0x01));
+*/
 static void i2cSlaveInit(uint8_t address) {
 	cli();
 
@@ -1093,6 +1306,19 @@ ISR(TWI_vect) {
 	TWCR = 0xC5; // Set TWIE (TWI Interrupt enable), TWEN (TWI Enable), TWEA (TWI Enable Acknowledgement), TWINT (Clear TWINT flag by writing a 1)
 }
 
+/*@
+	requires (i2cBuffer_TX_Head >= 0) && (i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX);
+	requires ((i2cBuffer_TX_Head >= i2cBuffer_TX_Tail) && ((STEPPER_I2C_BUFFERSIZE_TX - (i2cBuffer_TX_Head - i2cBuffer_TX_Tail)) >= 4))
+		|| ((i2cBuffer_TX_Head < i2cBuffer_TX_Tail) && (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Head - (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail)) >= 4);
+	assigns i2cBuffer_TX[i2cBuffer_TX_Head];
+	assigns i2cBuffer_TX[(i2cBuffer_TX_Head+1) % STEPPER_I2C_BUFFERSIZE_TX];
+	assigns i2cBuffer_TX[(i2cBuffer_TX_Head+2) % STEPPER_I2C_BUFFERSIZE_TX];
+	assigns i2cBuffer_TX[(i2cBuffer_TX_Head+3) % STEPPER_I2C_BUFFERSIZE_TX];
+	assigns i2cBuffer_TX[(i2cBuffer_TX_Head+4) % STEPPER_I2C_BUFFERSIZE_TX];
+	assigns i2cBuffer_TX_Head;
+
+	ensures i2cBuffer_TX_Head == (\old(i2cBuffer_TX_Head + 4) % STEPPER_I2C_BUFFERSIZE_TX);
+*/
 static inline void i2cTXDouble(double f) {
 	/*
 		Note this is REALLY a hackish and unclean
@@ -1150,17 +1376,21 @@ static inline double i2cRXDouble() {
 	requires i2cBuffer_RX_Head >= 0;
 	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 
+	requires \valid(&SREG);
+
+	assigns SREG;
+
 	assigns	i2cBuffer_TX_Tail, i2cBuffer_TX_Head;
 	assigns i2cBuffer_RX_Tail, i2cBuffer_RX_Head;
 
 	ensures i2cBuffer_TX_Tail >= 0;
-        ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
-        ensures i2cBuffer_TX_Head >= 0;
-        ensures i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
-        ensures i2cBuffer_RX_Tail >= 0;
-        ensures i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
-        ensures i2cBuffer_RX_Head >= 0;
-        ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+    ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+    ensures i2cBuffer_TX_Head >= 0;
+    ensures i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
+    ensures i2cBuffer_RX_Tail >= 0;
+    ensures i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
+    ensures i2cBuffer_RX_Head >= 0;
+    ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 */
 static void i2cMessageLoop() {
 	uint8_t rcvBytes = (i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
@@ -1170,6 +1400,9 @@ static void i2cMessageLoop() {
 	}
 	uint8_t cmd = i2cBuffer_RX[i2cBuffer_RX_Tail];
 	uint8_t txAvail = STEPPER_I2C_BUFFERSIZE_TX - ((i2cBuffer_TX_Tail <= i2cBuffer_TX_Head) ? (i2cBuffer_TX_Head - i2cBuffer_TX_Tail) : (STEPPER_I2C_BUFFERSIZE_TX - i2cBuffer_TX_Tail + i2cBuffer_TX_Head));
+	/*@ assert (txAvail <= STEPPER_I2C_BUFFERSIZE_TX) && (txAvail >= 0); */
+	/*@ assert (rcvBytes <= STEPPER_I2C_BUFFERSIZE_RX) && (rcvBytes >= 0); */
+
 	/*
 		We use a switch statement here. Would a jump table
 		be possible and more efficient?
@@ -1186,8 +1419,11 @@ static void i2cMessageLoop() {
 					return; /* Command not fully received until now */
 				}
 				if(txAvail < 8) {
-					/* Command is NOT satisfyable. Just skip ... */
-					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
 					return;
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
@@ -1232,8 +1468,11 @@ static void i2cMessageLoop() {
 					return; /* Command not fully received until now */
 				}
 				if(txAvail < 4) {
-					/* Command is NOT satisfyable. Just skip ... */
-					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
 					return;
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
@@ -1272,8 +1511,11 @@ static void i2cMessageLoop() {
 					return; /* Command not fully received until now */
 				}
 				if(txAvail < 4) {
-					/* Command is NOT satisfyable. Just skip ... */
-					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
 					return;
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
@@ -1304,10 +1546,16 @@ static void i2cMessageLoop() {
 			break;
 		case i2cCmd_GetMicrostepping:
 			{
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 				if(txAvail < 1) {
-					break; /* ToDo: TX buffer overflow */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
+					return;
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+
 				i2cBuffer_TX[i2cBuffer_TX_Head] = stateMicrostepping;
 				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
 			}
@@ -1349,8 +1597,11 @@ static void i2cMessageLoop() {
 					return; /* Command not fully received until now */
 				}
 				if(txAvail < 4) {
-					/* Command is NOT satisfyable. Just skip ... */
-					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
 					return;
 				}
 				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
@@ -1365,14 +1616,25 @@ static void i2cMessageLoop() {
 			break;
 		case i2cCmd_GetFault:
 			{
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 				if(txAvail < 1) {
-					break;
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
+					return;
 				}
+				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
+
+				/*
+					Fetch fault pins with interrupts disabled to prevent
+					race between reading and resetting of fault state pins.
+				*/
 				cli();
 				i2cBuffer_TX[i2cBuffer_TX_Head] = stateFault;
 				stateFault = 0; // Reset fault pins after readout
 				sei();
+
 				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 			}
 			break;
@@ -1390,7 +1652,12 @@ static void i2cMessageLoop() {
 			{
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 				if(txAvail < 2) {
-					/* Overflow in TX buffer ... ToDo. Currently we skip the command WITHOUT any response */
+					/*
+						Command is currently NOT satisfyable, simply wait
+						till more I2C data has been transmitted and reprocess
+						this command in a tight loop
+					*/
+					return;
 				} else {
 					i2cBuffer_TX[i2cBuffer_TX_Head] = STEPPER_COMMANDQUEUELENGTH;
 					i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_TX;
@@ -1399,8 +1666,14 @@ static void i2cMessageLoop() {
 				}
 			}
 			break;
-
 		case i2cCmd_Queue_Sync:
+			/*
+				TODO: Implement synchronization
+
+				Synchronization allows all stepepr boards inside a larger system
+				to reach a synchronization point and then trigger movement processing
+				simultanousely via general call.
+			*/
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Queue_ConstSpeed:
@@ -1408,6 +1681,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
@@ -1509,11 +1783,18 @@ static void i2cMessageLoop() {
 				}
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+				break;
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				stepperPlanMovement_Disable(channel, false);
 			}
-			break;
 		case i2cCmd_Exec_Sync:
+			/*
+				TODO: Implement synchronization
+
+				Synchronization allows all stepepr boards inside a larger system
+				to reach a synchronization point and then trigger movement processing
+				simultanousely via general call.
+			*/
 			i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 			break;
 		case i2cCmd_Exec_ConstSpeed:
@@ -1521,6 +1802,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
@@ -1568,6 +1850,7 @@ static void i2cMessageLoop() {
 				if(rcvBytes < 2+4) {
 					return; /* Command not fully received */
 				}
+
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
 				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
@@ -1825,6 +2108,9 @@ void delayMicros(unsigned int microDelay) {
 	/*
 		Busy waiting loop.
 		Takes 4 cycles. Micro Delay has been modified above
+	*/
+	/*@
+		assigns microDelay;
 	*/
 	__asm__ __volatile__ (
 		"lp: sbiw %0, 1\n"
