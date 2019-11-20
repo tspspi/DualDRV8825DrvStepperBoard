@@ -19,6 +19,8 @@ but not 5V vcc).
 __The controller is currently work in progress (but usable). Functions that
 have been tested won't change behaviour__
 
+__Correctness proof is currently work in progress__
+
 The stepper driver can be controlled via I2C and supports:
 
 * Running at a constant speed
@@ -40,6 +42,11 @@ Additional features:
 * Aborting running commands
 * Keeping track of current position (if enabled - useful for CNC applications)
 * Keeping track of current speed
+
+* Static analysis using frama-c and ACSL annotation is used to proof that the
+  code is free of many known common runtime errors, numeric overflows/underflows,
+  does only access valid memory, etc. and fulfills some properties (proofed by
+  using an proof assistant). This is currently work in progress.
 
 ## Implementation status of I2C commands
 
