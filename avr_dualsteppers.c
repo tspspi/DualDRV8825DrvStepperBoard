@@ -257,6 +257,8 @@ static void handleTimer2Interrupt() {
 		loop assigns drvRealEnabled, drvEnableState;
 		loop assigns state[0 .. (STEPPER_COUNT-1)];
 
+		loop invariant 0 <= stepperIdx < STEPPER_COUNT;
+
 	*/
 	for(stepperIdx = 0; stepperIdx < STEPPER_COUNT; stepperIdx = stepperIdx + 1) {
 		if(bResetRun) {
@@ -2152,6 +2154,16 @@ void delayMicros(unsigned int microDelay) {
 	return;
 }
 
+/*@
+	axiomatic hardware_registers {
+		axiom valid_TCCR0A: \valid(&TCCR0A);
+		axiom valid_TCCR0B: \valid(&TCCR0B);
+		axiom valid_TIMSK0: \valid(&TIMSK0);
+		axiom valid_PORTB: \valid(&PORTB);
+		axiom valid_DDRB: \valid(&DDRB);
+		axiom valid_UCSR0B: \valid(&UCSR0B);
+	}
+*/
 /*@
 	requires \valid(&TCCR0A) && \valid(&TCCR0B) && \valid(&TIMSK0);
 	requires \valid(&PORTB) && \valid(&DDRB);
