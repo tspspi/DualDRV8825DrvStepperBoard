@@ -16,8 +16,6 @@
 /*
 	If the following preprocessor directive is defined the steppers
 	will be put in sleep mode upon reset (after initial power-up)
-
-	There will be lower
 */
 #define STEPPER_DISABLE_STARTUP 1
 
