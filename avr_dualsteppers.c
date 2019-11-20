@@ -480,10 +480,10 @@ ISR(PCINT1_vect) {
 
 /*@
 	behavior unknownChannel:
-		requires stepperIndex >= STEPPER_COUNT;
+		assumes stepperIndex >= STEPPER_COUNT;
 		assigns \nothing;
 	behavior knownChannel:
-		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
 		assigns state[stepperIndex].constants.c1,
 		 	state[stepperIndex].constants.c2,
 			state[stepperIndex].constants.c3,
@@ -523,7 +523,7 @@ static bool updateConstants(int stepperIndex) {
 	requires \valid(&PORTB) && \valid(&PORTD);
 
 	behavior supportedMicrosteps:
-		requires (microsteps == 0) || (microsteps == 2) || (microsteps == 4)
+		assumes (microsteps == 0) || (microsteps == 2) || (microsteps == 4)
 			|| (microsteps == 8) || (microsteps == 16) || (microsteps == 32);
 
 		assigns PORTB;
@@ -532,7 +532,7 @@ static bool updateConstants(int stepperIndex) {
 
 		ensures stateMicrostepping == microsteps;
 	behavior unsupportedMicrosteps:
-		requires (microsteps != 0) && (microsteps != 2) && (microsteps != 4)
+		assumes (microsteps != 0) && (microsteps != 2) && (microsteps != 4)
 			&& (microsteps != 8) && (microsteps != 16) && (microsteps != 32);
 	disjoint behaviors;
 	complete behaviors;
@@ -571,6 +571,19 @@ static void stepperSetMicrostepping(uint8_t microsteps) {
 	requires \valid(&PORTC) && \valid(&DDRC) && \valid(&PINC);
 	requires \valid(&PORTD) && \valid(&DDRD);
 	requires \valid(&PCICR) && \valid(&PCMSK1);
+
+	assigns stateFault;
+	assigns drvEnableState;
+	assigns drvRealEnabled;
+
+	ensures
+		\forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueHead == 0) && (state[iStep].cmdQueueTail == 0) &&
+		    (state[iStep].counterCurrent == 0) && (state[iStep].c_i == -1) &&
+		    (state[iStep].currentPosition == 0) && (state[iStep].settings.acceleration == STEPPER_INITIAL_ACCELERATION) &&
+		    (state[iStep].settings.deceleration == STEPPER_INITIAL_DECELERATION) &&
+		    (state[iStep].settings.alpha == STEPPER_INITIAL_ALPHA) &&
+		    (state[iStep].settings.vmax == STEPPER_INITIAL_VMAX);
 */
 static void stepperSetup() {
 	/*
@@ -1194,9 +1207,12 @@ static volatile int i2cBuffer_TX_Tail = 0;
 	requires i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 
 	behavior bufferOverflow:
-		requires (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX == i2cBuffer_RX_Tail;
+		assumes (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX == i2cBuffer_RX_Tail;
+
 		assigns \nothing;
 	behavior bufferAvail:
+		assumes (i2cBuffer_RX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX != i2cBuffer_RX_Tail;
+
 		assigns i2cBuffer_RX_Head;
 		assigns i2cBuffer_RX[i2cBuffer_RX_Head];
 
@@ -1227,9 +1243,12 @@ static inline void i2cEventBusError() {
 	requires i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
 
 	behavior bufferUnderrun:
-		requires i2cBuffer_TX_Head == i2cBuffer_TX_Tail;
+		assumes i2cBuffer_TX_Head == i2cBuffer_TX_Tail;
+
 		assigns \nothing;
 	behavior bufferDefault:
+		assumes i2cBuffer_TX_Head != i2cBuffer_TX_Tail;
+
 		assigns i2cBuffer_TX_Tail;
 		assigns i2cBuffer_TX[i2cBuffer_TX_Tail];
 
@@ -1341,6 +1360,14 @@ static inline void i2cTXDouble(double f) {
 	return;
 }
 
+/*@
+	requires \valid(&i2cBuffer_RX[i2cBuffer_RX_Tail]);
+	requires \valid(&i2cBuffer_RX[(i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX]);
+        requires \valid(&i2cBuffer_RX[(i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX]);
+        requires \valid(&i2cBuffer_RX[(i2cBuffer_RX_Tail + 3) % STEPPER_I2C_BUFFERSIZE_RX]);
+	requires i2cBuffer_RX_Tail >= 0;
+	requires i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
+*/
 static inline double i2cRXDouble() {
 	/*
 		Note this is REALLY a hackish and unclean
@@ -1384,13 +1411,13 @@ static inline double i2cRXDouble() {
 	assigns i2cBuffer_RX_Tail, i2cBuffer_RX_Head;
 
 	ensures i2cBuffer_TX_Tail >= 0;
-    ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
-    ensures i2cBuffer_TX_Head >= 0;
-    ensures i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
-    ensures i2cBuffer_RX_Tail >= 0;
-    ensures i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
-    ensures i2cBuffer_RX_Head >= 0;
-    ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
+	ensures i2cBuffer_TX_Tail < STEPPER_I2C_BUFFERSIZE_TX;
+	ensures i2cBuffer_TX_Head >= 0;
+	ensures i2cBuffer_TX_Head < STEPPER_I2C_BUFFERSIZE_TX;
+	ensures i2cBuffer_RX_Tail >= 0;
+	ensures i2cBuffer_RX_Tail < STEPPER_I2C_BUFFERSIZE_RX;
+	ensures i2cBuffer_RX_Head >= 0;
+	ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 */
 static void i2cMessageLoop() {
 	uint8_t rcvBytes = (i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
@@ -1976,6 +2003,12 @@ ISR(TIMER0_OVF_vect) {
 
 /*
 	Millis function used to calculate time delays
+*/
+/*@
+	requires \valid(&SREG);
+	requires \valid(&systemMillis);
+
+	assigns SREG;
 */
 unsigned long int millis() {
 	unsigned long int m;
