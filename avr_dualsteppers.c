@@ -1181,6 +1181,20 @@ static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
 }
 
 /*@
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.alpha >= STEPPER_MIN_ALPHA) && (state[iStep].settings.alpha <= STEPPER_MAX_ALPHA);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+	 	==> (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> state[iStep].constants.c7 == 2 * state[iStep].settings.alpha / state[iStep].settings.acceleration;
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
+	requires (immediate == true) || (immediate == false);
+
 	behavior unknownStepper:
 		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 		assigns \nothing;
@@ -1188,18 +1202,15 @@ static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
 		assumes immediate == true;
 
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		requires (v >= (state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ)/(4294967295)) && (v <= state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ);
+
 	behavior knownStepperPlanned:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
 		assumes immediate == false;
 
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		requires (v >= (state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ)/(4294967295)) && (v <= state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ);
+
+
 	disjoint behaviors;
 	complete behaviors;
 */
