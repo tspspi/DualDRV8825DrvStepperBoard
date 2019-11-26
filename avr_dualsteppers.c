@@ -127,15 +127,17 @@
 */
 #define STEPPER_MAX_ALPHA					(0.01 * M_PI)
 #define STEPPER_MIN_ALPHA					((0.01 * M_PI)/128.0)
-#define STEPPER_MAX_VMAX					(STEPPER_MAX_ALPHA * 250000.0)
-#define STEPPER_MIN_VMAX					0.0
-#define STEPPER_MIN_ACCELERATION			0.0
-#define STEPPER_MAX_ACCELERATION			(250000.0 * STEPPER_MAX_VMAX)
-#define STEPPER_MIN_DECELERATION			(-250000.0 * STEPPER_MAX_VMAX)
-#define STEPPER_MAX_DECELERATION			0.0
+#define STEPPER_MAX_VMAX					100 /* (STEPPER_MAX_ALPHA * 250000.0) */
+#define STEPPER_MIN_VMAX					0.01
+// #define STEPPER_MIN_ACCELERATION			0.01 /* Currently arbitrary! */
+// #define STEPPER_MAX_ACCELERATION			((STEPPER_MAX_VMAX * STEPPER_MAX_VMAX)/(STEPPER_MIN_ALPHA*4294967296.0))
+#define STEPPER_MIN_ACCELERATION			((STEPPER_MAX_VMAX * STEPPER_MAX_VMAX)/(STEPPER_MIN_ALPHA*4294967296.0))
+#define STEPPER_MAX_ACCELERATION			1000 /* Currently arbitrary */
+#define STEPPER_MIN_DECELERATION			(-1.0 * ((STEPPER_MAX_VMAX * STEPPER_MAX_VMAX)/(STEPPER_MIN_ALPHA*4294967296.0)))
+#define STEPPER_MAX_DECELERATION			-0.01 /* Currently arbitrary! */
 
-#define STEPPER_MIN_RELATIVEDISTANCE		0.0
-#define STEPPER_MAX_RELATIVEDISTANCE		(4294967296.0 * STEPPER_MIN_ALPHA)
+#define STEPPER_MIN_RELATIVEDISTANCE		STEPPER_MIN_ALPHA
+#define STEPPER_MAX_RELATIVEDISTANCE		(4294967295.0 * STEPPER_MIN_ALPHA)
 
 /*
 	We use our own systick implementation
@@ -728,28 +730,37 @@ static void stepperSetup() {
 }
 
 /*@
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].constants.c10 == state[iStep].settings.alpha * STEPPER_TIMERTICK_FRQ);
+	requires (immediate == true) || (immediate == false);
+
 	behavior unknownStepper:
-		requires (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
+		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 		assigns \nothing;
 	behavior knownStepperImmediate:
-		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		requires immediate != 0;
+		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		assumes immediate == true;
 
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+		requires (v >= (state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ)/(4294967295)) && (v <= state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ);
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.constantSpeed.cConst;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
-		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+		assigns state[stepperIndex].cmdQueueHead;
+		assigns state[stepperIndex].cmdQueueTail;
 
 		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 		ensures state[stepperIndex].c_i == -1;
 	behavior knownStepperPlanned:
-		requires (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		requires immediate == 0;
+		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+		assumes immediate == false;
 
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+		requires (v >= (state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ)/(4294967295)) && (v <= state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ);
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.constantSpeed.cConst;
@@ -757,6 +768,8 @@ static void stepperSetup() {
 		assigns state[stepperIndex].cmdQueueHead;
 
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+	disjoint behaviors;
+	complete behaviors;
 */
 static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int direction, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT)) { return; }
@@ -768,6 +781,10 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 
 	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_ConstantSpeed;
 
+	double vMin = state[stepperIndex].settings.alpha * STEPPER_TIMERTICK_FRQ / (4294967295);
+	if(v < vMin) { v = vMin; }
+	else if(v > state[stepperIndex].settings.vmax) { v = state[stepperIndex].settings.vmax; }
+
 	double tickCount = state[stepperIndex].constants.c10 / v;
 	if(tickCount > 4294967295.0) {
 		/* Clamp to maximum */
@@ -776,7 +793,7 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 		/* Clamp to minimum */
 		state[stepperIndex].cmdQueue[idx].data.constantSpeed.cConst = 1;
 	} else {
-		state[stepperIndex].cmdQueue[idx].data.constantSpeed.cConst = (uint32_t)(state[stepperIndex].constants.c10 / v);
+		state[stepperIndex].cmdQueue[idx].data.constantSpeed.cConst = (uint32_t)(tickCount);
 	}
 
 	state[stepperIndex].cmdQueue[idx].forward = direction;
@@ -799,18 +816,31 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
                 ==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
 	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
-				==> (state[iStep].constants.c1 >= 0) && (state[iStep].constants.c1 < 4294967296)
-					&& (state[iStep].constants.c2 >= 0) && (state[iStep].constants.c2 < 4294967296)
-					&& (state[iStep].constants.c3 >= 0) && (state[iStep].constants.c3 < 4294967296)
-					&& (state[iStep].constants.c4 >= 0) && (state[iStep].constants.c4 < 4294967296)
-					&& (state[iStep].constants.c5 >= 0) && (state[iStep].constants.c5 < 4294967296)
-					&& (state[iStep].constants.c7 >= 0) && (state[iStep].constants.c7 < 4294967296)
-					&& (state[iStep].constants.c8 >= 0) && (state[iStep].constants.c8 < 4294967296)
-					&& (state[iStep].constants.c9 >= 0) && (state[iStep].constants.c9 < 4294967296)
-					&& (state[iStep].constants.c10 >= 0) && (state[iStep].constants.c10 < 4294967296);
+				==> state[iStep].constants.c2 == (state[iStep].settings.vmax * state[iStep].settings.vmax) / (2 * state[iStep].settings.acceleration * state[iStep].settings.alpha);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c4 == -1 * (state[iStep].settings.vmax * state[iStep].settings.vmax) / (2 * state[iStep].settings.deceleration * state[iStep].settings.alpha);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c5 == state[iStep].settings.deceleration / (state[iStep].settings.deceleration - state[iStep].settings.acceleration);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c7 == 2 * state[iStep].settings.alpha / state[iStep].settings.acceleration;
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c8 == state[iStep].settings.acceleration / (state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c9 == state[iStep].settings.acceleration / (state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> state[iStep].constants.c10 == state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
+
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> (state[iStep].settings.alpha >= STEPPER_MIN_ALPHA) && (state[iStep].settings.alpha <= STEPPER_MAX_ALPHA);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+				==> (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
 
 	requires (sTotal >= STEPPER_MIN_RELATIVEDISTANCE);
-	requires (sTotal < STEPPER_MAX_RELATIVEDISTANCE);
+	requires (sTotal <= STEPPER_MAX_RELATIVEDISTANCE);
 
 	behavior unknownStepper:
 		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
@@ -818,19 +848,6 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 	behavior knownStepperImmediate:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
 		assumes immediate != 0;
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
-
-		requires state[stepperIndex].constants.c2 == (state[stepperIndex].settings.vmax * state[stepperIndex].settings.vmax) / (2 * state[stepperIndex].settings.acceleration * state[stepperIndex].settings.alpha);
-		requires state[stepperIndex].constants.c4 == -1 * (state[stepperIndex].settings.vmax * state[stepperIndex].settings.vmax) / (2 * state[stepperIndex].settings.deceleration * state[stepperIndex].settings.alpha);
-		requires state[stepperIndex].constants.c5 == state[stepperIndex].settings.deceleration / (state[stepperIndex].settings.deceleration - state[stepperIndex].settings.acceleration);
-		requires state[stepperIndex].constants.c7 == 2 * state[stepperIndex].settings.alpha / state[stepperIndex].settings.acceleration;
-		requires state[stepperIndex].constants.c8 == state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
-		requires state[stepperIndex].constants.c9 == state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
-		requires state[stepperIndex].constants.c10 == state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
@@ -850,19 +867,6 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
 		assumes immediate == 0;
 
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
-
-		requires state[stepperIndex].constants.c2 == (state[stepperIndex].settings.vmax * state[stepperIndex].settings.vmax) / (2 * state[stepperIndex].settings.acceleration * state[stepperIndex].settings.alpha);
-		requires state[stepperIndex].constants.c4 == -1 * (state[stepperIndex].settings.vmax * state[stepperIndex].settings.vmax) / (2 * state[stepperIndex].settings.deceleration * state[stepperIndex].settings.alpha);
-		requires state[stepperIndex].constants.c5 == state[stepperIndex].settings.deceleration / (state[stepperIndex].settings.deceleration - state[stepperIndex].settings.acceleration);
-		requires state[stepperIndex].constants.c7 == 2 * state[stepperIndex].settings.alpha / state[stepperIndex].settings.acceleration;
-		requires state[stepperIndex].constants.c8 == state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
-		requires state[stepperIndex].constants.c9 == state[stepperIndex].settings.acceleration / (state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
-		requires state[stepperIndex].constants.c10 == state[stepperIndex].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
-
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
@@ -875,9 +879,15 @@ static void stepperPlanMovement_ConstantSpeed(int stepperIndex, double v, int di
 		assigns state[stepperIndex].cmdQueueHead;
 
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+	disjoint behaviors;
 */
 static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sTotal, int direction, bool immediate) {
 	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+	/*@ assert (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT); */
+	/*@ assert (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA); */
+	if((sTotal < STEPPER_MIN_RELATIVEDISTANCE) || (sTotal > STEPPER_MAX_RELATIVEDISTANCE)) { return; }
+	/*@ assert sTotal >= STEPPER_MIN_RELATIVEDISTANCE; */
+	/*@ assert sTotal <= STEPPER_MAX_RELATIVEDISTANCE; */
 
 	const int idx = state[stepperIndex].cmdQueueHead;
 
@@ -886,13 +896,20 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 	double nTotal = sTotal / state[stepperIndex].settings.alpha;
 
 	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = state[stepperIndex].constants.c2;
+	/*@ assert state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA < (STEPPER_MAX_VMAX*STEPPER_MAX_VMAX)/(STEPPER_MIN_ACCELERATION*STEPPER_MIN_ALPHA); */
+	/*@ assert state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA >= (STEPPER_MIN_VMAX*STEPPER_MIN_VMAX)/(STEPPER_MAX_ACCELERATION*STEPPER_MAX_ALPHA); */
 	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = state[stepperIndex].constants.c4;
+	/*@ assert state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD < -1*(STEPPER_MAX_VMAX*STEPPER_MAX_VMAX)/(STEPPER_MIN_DECELERATION*STEPPER_MIN_ALPHA); */
+	/*@ assert state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD >= -1*(STEPPER_MIN_VMAX*STEPPER_MIN_VMAX)/(STEPPER_MAX_DECELERATION*STEPPER_MAX_ALPHA); */
 
-	uint32_t nTP = state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA + state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD;
+	double nTP = state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA + state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD;
+	/*@ assert nTP >= 0; */
+	/*@ assert nTP <= 4294967295; */
+
 	/*
 		Check if we have a constant velocity part (nTP < nTotal) or not (nTP >= nTotal)
 	*/
-	if(nTP < ((uint32_t)nTotal)) {
+	if(nTP < nTotal) {
 		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nC = ((uint32_t)nTotal) - nTP;
 	} else {
 		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = nTotal * state[stepperIndex].constants.c5;
@@ -1608,14 +1625,35 @@ static inline double i2cRXDouble() {
 	ensures i2cBuffer_RX_Head >= 0;
 	ensures i2cBuffer_RX_Head < STEPPER_I2C_BUFFERSIZE_RX;
 
-	ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
-	 			==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
-	ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
-				==> (state[iStep].settings.alpha >= STEPPER_MIN_ALPHA) && (state[iStep].settings.alpha <= STEPPER_MAX_ALPHA);
-	ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
-			 	==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-	ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
-				==> (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
+	behavior cmdSetMax_ValidStep:
+		assumes ((i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head)) >= 6;
+		assumes i2cBuffer_RX[i2cBuffer_RX_Tail] == i2cCmd_SetVMax;
+		assumes (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] >= 0) && (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] < STEPPER_COUNT);
+
+		assigns state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.vmax;
+
+		ensures (state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.vmax >= STEPPER_MIN_VMAX) && (state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.vmax < STEPPER_MAX_VMAX);
+	behavior cmdSetAlpha_ValidStep:
+		assumes ((i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head)) >= 6;
+		assumes i2cBuffer_RX[i2cBuffer_RX_Tail] == i2cCmd_SetAlpha;
+		assumes (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] >= 0) && (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] < STEPPER_COUNT);
+
+		assigns state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.alpha;
+
+		ensures (state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.alpha >= STEPPER_MIN_ALPHA) && (state[i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX]].settings.alpha < STEPPER_MAX_ALPHA);
+	behavior cmdSetAcceleration:
+		assumes ((i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head)) >= 10;
+		assumes i2cBuffer_RX[i2cBuffer_RX_Tail] == i2cCmd_SetAccelerateDecelerate;
+		assumes (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] >= 0) && (i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX] < STEPPER_COUNT);
+
+		ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+		ensures \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
+
+	disjoint behaviors;
+*/
+/*
 */
 static void i2cMessageLoop() {
 	uint8_t rcvBytes = (i2cBuffer_RX_Tail <= i2cBuffer_RX_Head) ? (i2cBuffer_RX_Head - i2cBuffer_RX_Tail) : (STEPPER_I2C_BUFFERSIZE_RX - i2cBuffer_RX_Tail + i2cBuffer_RX_Head);
