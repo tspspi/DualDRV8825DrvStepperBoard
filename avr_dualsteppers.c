@@ -201,7 +201,9 @@ struct stepperState {
 	unsigned int					cmdQueueHead;
 	unsigned int					cmdQueueTail;
 
-	long int						currentPosition;			/* Current position in "steps" i.e. currentPosition * alpha = angular Position */
+	#ifdef ENABLE_ABSOLUTEPOSITION
+		long int						currentPosition;			/* Current position in "steps" i.e. currentPosition * alpha = angular Position */
+	#endif
 
 	/* Cache for precalculated constants - see documentation */
 	struct {
@@ -458,27 +460,31 @@ static void handleTimer2Interrupt() {
 			if(stepperIdx == 0) {
 				// Pulse PD2 high
 				PORTD = PORTD | 0x08;
-				if((PORTD & 0x04) != 0) {
-					if(state[0].currentPosition < 2147483647) {
-						state[0].currentPosition++;
+				#ifdef ENABLE_ABSOLUTEPOSITION
+					if((PORTD & 0x04) != 0) {
+						if(state[0].currentPosition < 2147483647) {
+							state[0].currentPosition++;
+						}
+					} else {
+						if(state[0].currentPosition > 0) {
+							state[0].currentPosition--;
+						}
 					}
-				} else {
-					if(state[0].currentPosition > 0) {
-						state[0].currentPosition--;
-					}
-				}
+				#endif
 			} else {
 				// Pulse PC1 high
 				PORTC = PORTC | 0x02;
-				if((PORTC & 0x01) != 0) {
-					if(state[1].currentPosition < 2147483647) {
-						state[1].currentPosition++;
+				#ifdef ENABLE_ABSOLUTEPOSITION
+					if((PORTC & 0x01) != 0) {
+						if(state[1].currentPosition < 2147483647) {
+							state[1].currentPosition++;
+						}
+					} else {
+						if(state[1].currentPosition > 0) {
+							state[1].currentPosition--;
+						}
 					}
-				} else {
-					if(state[1].currentPosition > 0) {
-						state[1].currentPosition--;
-					}
-				}
+				#endif
 			}
 		}
 	}
@@ -633,7 +639,7 @@ static void stepperSetMicrostepping(uint8_t microsteps) {
 		\forall integer iStep; 0 <= iStep < STEPPER_COUNT
 		==> (state[iStep].cmdQueueHead == 0) && (state[iStep].cmdQueueTail == 0) &&
 		    (state[iStep].counterCurrent == 0) && (state[iStep].c_i == -1) &&
-		    (state[iStep].currentPosition == 0) && (state[iStep].settings.acceleration == STEPPER_INITIAL_ACCELERATION) &&
+		    (state[iStep].settings.acceleration == STEPPER_INITIAL_ACCELERATION) &&
 		    (state[iStep].settings.deceleration == STEPPER_INITIAL_DECELERATION) &&
 		    (state[iStep].settings.alpha == STEPPER_INITIAL_ALPHA) &&
 		    (state[iStep].settings.vmax == STEPPER_INITIAL_VMAX);
@@ -694,7 +700,9 @@ static void stepperSetup() {
 		state[i].counterCurrent = 0;
 		state[i].c_i = -1; /* Will trigger initialization after planning */
 
-		state[i].currentPosition = 0; /* Initialize always at position 0 */
+		#ifdef ENABLE_ABSOLUTEPOSITION
+			state[i].currentPosition = 0; /* Initialize always at position 0 */
+		#endif
 
 		state[i].settings.acceleration = STEPPER_INITIAL_ACCELERATION;
 		state[i].settings.deceleration = STEPPER_INITIAL_DECELERATION;
@@ -938,142 +946,166 @@ static void stepperPlanMovement_AccelerateStopToStop(int stepperIndex, double sT
 	return;
 }
 
-/*@
-	behavior unknownStepper:
-		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
-		assigns \nothing;
-	behavior knownStepperImmediate:
-		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate != 0;
+#ifdef ENABLE_ABSOLUTEPOSITION
+	/*@
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c2 == (state[iStep].settings.vmax * state[iStep].settings.vmax) / (2 * state[iStep].settings.acceleration * state[iStep].settings.alpha);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c4 == -1 * (state[iStep].settings.vmax * state[iStep].settings.vmax) / (2 * state[iStep].settings.deceleration * state[iStep].settings.alpha);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c5 == state[iStep].settings.deceleration / (state[iStep].settings.deceleration - state[iStep].settings.acceleration);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c7 == 2 * state[iStep].settings.alpha / state[iStep].settings.acceleration;
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c8 == state[iStep].settings.acceleration / (state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c9 == state[iStep].settings.acceleration / (state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ * (double)STEPPER_TIMERTICK_FRQ);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> state[iStep].constants.c10 == state[iStep].settings.alpha * (double)STEPPER_TIMERTICK_FRQ;
 
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.alpha >= STEPPER_MIN_ALPHA) && (state[iStep].settings.alpha <= STEPPER_MAX_ALPHA);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+		requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+					==> (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
 
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		behavior unknownStepper:
+			assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
-		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
+			assigns \nothing;
+		behavior knownStepperImmediate:
+			assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+			assumes immediate != 0;
 
-		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
-		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
-		ensures state[stepperIndex].c_i == -1;
-	behavior knownStepperPlanned:
-		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate == 0;
+			requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
 
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+			requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
+			requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
+			requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+			requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
 
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+			assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
 
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
-		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
-		assigns state[stepperIndex].cmdQueueHead;
+			ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
+			ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
+			ensures state[stepperIndex].c_i == -1;
+		behavior knownStepperPlanned:
+			assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
+			assumes immediate == 0;
 
-		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
-*/
-static void stepperPlanMovement_AccelerateStopToStopAbsolute(int stepperIndex, double sPosition, bool immediate) {
-	if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
-	const int idx = state[stepperIndex].cmdQueueHead;
+			requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
 
-	/* Get current position */
-	long int posCur = state[stepperIndex].currentPosition;
+			requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
+			requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
+			requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+			requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
 
-	/* Calculate target position in steps */
-	long int posTarget = sPosition / state[stepperIndex].settings.alpha;
-	double nTotal;
-	if(posTarget > posCur) {
-		nTotal = posTarget - posCur;
-		state[stepperIndex].cmdQueue[idx].forward = 1;
-	} else {
-		nTotal = posCur - posTarget;
-		state[stepperIndex].cmdQueue[idx].forward = 0;
-	}
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nA;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nC;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.nD;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c7;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c8;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.c9;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].data.acceleratedStopToStop.initialDelayTicks;
+			assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].forward;
+			assigns state[stepperIndex].cmdQueueHead;
 
-	state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_AccelerateStopToStop;
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = state[stepperIndex].constants.c2;
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = state[stepperIndex].constants.c4;
-
-	uint32_t nTP = state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA + state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD;
-	if(nTP < ((uint32_t)nTotal)) {
-		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nC = nTotal - ((uint32_t)nTP);
-	} else {
-		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = nTotal * state[stepperIndex].constants.c5;
-		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = nTotal - state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA;
-	}
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c7 = state[stepperIndex].constants.c7;
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c8 = state[stepperIndex].constants.c8;
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c9 = state[stepperIndex].constants.c9;
-
-	state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.initialDelayTicks = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
-
-	/*
-		Make command active
+			ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 	*/
-	if(immediate) {
-		state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
-		state[stepperIndex].c_i = -1;
-		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
-	} else {
-		state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+	static void stepperPlanMovement_AccelerateStopToStopAbsolute(int stepperIndex, double sPosition, bool immediate) {
+		if((stepperIndex < 0) || (stepperIndex > 1)) { return; }
+		const int idx = state[stepperIndex].cmdQueueHead;
+
+		/* Get current position */
+		long int posCur = state[stepperIndex].currentPosition;
+
+		/* Calculate target position in steps */
+		long int posTarget = sPosition / state[stepperIndex].settings.alpha;
+		double nTotal;
+		if(posTarget > posCur) {
+			nTotal = posTarget - posCur;
+			state[stepperIndex].cmdQueue[idx].forward = 1;
+		} else {
+			nTotal = posCur - posTarget;
+			state[stepperIndex].cmdQueue[idx].forward = 0;
+		}
+
+		state[stepperIndex].cmdQueue[idx].cmdType = stepperCommand_AccelerateStopToStop;
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = state[stepperIndex].constants.c2;
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = state[stepperIndex].constants.c4;
+
+		uint32_t nTP = state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA + state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD;
+		if(nTP < ((uint32_t)nTotal)) {
+			state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nC = nTotal - ((uint32_t)nTP);
+		} else {
+			state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA = nTotal * state[stepperIndex].constants.c5;
+			state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nD = nTotal - state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.nA;
+		}
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c7 = state[stepperIndex].constants.c7;
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c8 = state[stepperIndex].constants.c8;
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.c9 = state[stepperIndex].constants.c9;
+
+		state[stepperIndex].cmdQueue[idx].data.acceleratedStopToStop.initialDelayTicks = sqrt(state[stepperIndex].constants.c7) * (double)STEPPER_TIMERTICK_FRQ;
+
+		/*
+			Make command active
+		*/
+		if(immediate) {
+			state[stepperIndex].cmdQueueTail = state[stepperIndex].cmdQueueHead;
+			state[stepperIndex].c_i = -1;
+			state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+		} else {
+			state[stepperIndex].cmdQueueHead = (state[stepperIndex].cmdQueueHead + 1) % STEPPER_COMMANDQUEUELENGTH;
+		}
+		return;
 	}
-	return;
-}
+#endif
 
 /*@
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+	requires (immediate == true) || (immediate == false);
+
 	behavior unknownStepper:
 		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 		assigns \nothing;
+
 	behavior knownStepperImmediate:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate != 0;
-
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		assumes immediate == true;
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
 
+		ensures state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType == stepperCommand_Disable;
 		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 		ensures state[stepperIndex].c_i == -1;
 	behavior knownStepperPlanned:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate == 0;
-
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		assumes immediate == false;
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueueHead;
 
+		ensures state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType == stepperCommand_Disable;
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 */
 static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
@@ -1840,49 +1872,51 @@ static void i2cMessageLoop() {
 				stepperSetMicrostepping(microstepNew);
 			}
 			break;
-		case i2cCmd_SetAbsolutePosition:
-			{
-				if(rcvBytes < 2+4) {
-					return; /* Command not fully received */
-				}
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				double absPosition = i2cRXDouble();
+		#ifdef ENABLE_ABSOLUTEPOSITION
+			case i2cCmd_SetAbsolutePosition:
+				{
+					if(rcvBytes < 2+4) {
+						return; /* Command not fully received */
+					}
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					double absPosition = i2cRXDouble();
 
-				if(channel < 2) {
-					state[channel].currentPosition = absPosition / state[channel].settings.alpha;
+					if(channel < 2) {
+						state[channel].currentPosition = absPosition / state[channel].settings.alpha;
+					}
+					/* Done */
 				}
-				/* Done */
-			}
-			break;
-		case i2cCmd_GetAbsolutePosition:
-			{
-				/*
-					Two byte command that allows reading of 4 bytes representing currently configured
-					alpha value of selected channel
-				*/
-				if(rcvBytes < 2) {
-					return; /* Command not fully received until now */
-				}
-				if(txAvail < 4) {
+				break;
+			case i2cCmd_GetAbsolutePosition:
+				{
 					/*
-						Command is currently NOT satisfyable, simply wait
-						till more I2C data has been transmitted and reprocess
-						this command in a tight loop
+						Two byte command that allows reading of 4 bytes representing currently configured
+						alpha value of selected channel
 					*/
-					return;
+					if(rcvBytes < 2) {
+						return; /* Command not fully received until now */
+					}
+					if(txAvail < 4) {
+						/*
+							Command is currently NOT satisfyable, simply wait
+							till more I2C data has been transmitted and reprocess
+							this command in a tight loop
+						*/
+						return;
+					}
+					uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
+					double curPos = (channel < 2) ? state[channel].currentPosition * state[channel].settings.alpha : 1.0e38;
+
+					/* Encode IEEE float to 4 byte sequence in little endian */
+					i2cTXDouble(curPos);
+
+					/* Done */
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
 				}
-				uint8_t channel = i2cBuffer_RX[(i2cBuffer_RX_Tail+1) % STEPPER_I2C_BUFFERSIZE_RX];
-				double curPos = (channel < 2) ? state[channel].currentPosition * state[channel].settings.alpha : 1.0e38;
-
-				/* Encode IEEE float to 4 byte sequence in little endian */
-				i2cTXDouble(curPos);
-
-				/* Done */
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 2) % STEPPER_I2C_BUFFERSIZE_RX; /* Discard command in RX buffer */
-			}
-			break;
+				break;
+		#endif
 		case i2cCmd_GetFault:
 			{
 				if(txAvail < 1) {
