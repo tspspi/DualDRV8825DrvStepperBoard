@@ -1130,40 +1130,33 @@ static void stepperPlanMovement_Disable(int stepperIndex, bool immediate) {
 }
 
 /*@
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].cmdQueueHead >= 0) && (state[iStep].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
+	requires (immediate == true) || (immediate == false);
+
 	behavior unknownStepper:
 		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 		assigns \nothing;
+
 	behavior knownStepperImmediate:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate != 0;
-
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		assumes immediate == true;
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueueTail, state[stepperIndex].cmdQueueHead;
 
+		ensures state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType == stepperCommand_Stop;
 		ensures state[stepperIndex].cmdQueueTail == \old(state[stepperIndex].cmdQueueHead);
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 		ensures state[stepperIndex].c_i == -1;
 	behavior knownStepperPlanned:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-		assumes immediate == 0;
-
-		requires (state[stepperIndex].cmdQueueHead >= 0) && (state[stepperIndex].cmdQueueHead < STEPPER_COMMANDQUEUELENGTH);
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
+		assumes immediate == false;
 
 		assigns state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType;
 		assigns state[stepperIndex].cmdQueueHead;
 
+		ensures state[stepperIndex].cmdQueue[\old(state[stepperIndex].cmdQueueHead)].cmdType == stepperCommand_Stop;
 		ensures state[stepperIndex].cmdQueueHead == ((\old(state[stepperIndex].cmdQueueHead) + 1) % STEPPER_COMMANDQUEUELENGTH);
 */
 static void stepperPlanMovement_Stop(int stepperIndex, bool immediate) {
