@@ -523,16 +523,20 @@ ISR(PCINT1_vect) {
 	c10		Constant speed timestep constant (alpha * f)
 */
 /*@
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+	 	==> (state[iStep].settings.vmax >= STEPPER_MIN_VMAX) && (state[iStep].settings.vmax <= STEPPER_MAX_VMAX);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.alpha >= STEPPER_MIN_ALPHA) && (state[iStep].settings.alpha <= STEPPER_MAX_ALPHA);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==> (state[iStep].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[iStep].settings.acceleration <= STEPPER_MAX_ACCELERATION);
+	requires \forall integer iStep; 0 <= iStep < STEPPER_COUNT
+		==>  (state[iStep].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[iStep].settings.deceleration <= STEPPER_MAX_DECELERATION);
+
 	behavior unknownChannel:
 		assumes (stepperIndex < 0) || (stepperIndex >= STEPPER_COUNT);
 		assigns \nothing;
 	behavior knownChannel:
 		assumes (stepperIndex >= 0) && (stepperIndex < STEPPER_COUNT);
-
-		requires (state[stepperIndex].settings.vmax >= STEPPER_MIN_VMAX) && (state[stepperIndex].settings.vmax <= STEPPER_MAX_VMAX);
-		requires (state[stepperIndex].settings.alpha >= STEPPER_MIN_ALPHA) && (state[stepperIndex].settings.alpha <= STEPPER_MAX_ALPHA);
-		requires (state[stepperIndex].settings.acceleration >= STEPPER_MIN_ACCELERATION) && (state[stepperIndex].settings.acceleration <= STEPPER_MAX_ACCELERATION);
-		requires (state[stepperIndex].settings.deceleration >= STEPPER_MIN_DECELERATION) && (state[stepperIndex].settings.deceleration <= STEPPER_MAX_DECELERATION);
 
 		assigns state[stepperIndex].constants.c1,
 		 	state[stepperIndex].constants.c2,
@@ -655,9 +659,13 @@ static void stepperSetup() {
 	/*
 		Stop our timer if it's currently running
 	*/
-	cli();
+	#ifndef FRAMAC_SKIP
+		cli();
+	#endif
 	TCCR2B = 0; 							/* Disable timer if it's currently running */
-	sei();
+	#ifndef FRAMAC_SKIP
+		sei();
+	#endif
 
 	/*
 		Initialize pins with usage as described above
@@ -717,10 +725,14 @@ static void stepperSetup() {
 
 	/* Fault status to status register */
 	{
-		cli();
+		#ifndef FRAMAC_SKIP
+			cli();
+		#endif
 		uint8_t faultPins = PINC;
 		stateFault = (((faultPins >> 2) & 0x01) ^ 0x01) | (((faultPins >> 2) & 0x02) ^ 0x02);
-		sei();
+		#ifndef FRAMAC_SKIP
+			sei();
+		#endif
 	}
 
 	/*
@@ -1507,12 +1519,16 @@ static inline uint8_t i2cEventTransmit() {
 	ensures (TWAR == address << 1) || (TWAR == ((address << 1) | 0x01));
 */
 static void i2cSlaveInit(uint8_t address) {
-	cli();
+	#ifndef FRAMAC_SKIP
+		cli();
+	#endif
 
 	TWAR = (address << 1) | 0x00; // Respond to general calls and calls towards us
 	TWCR = 0xC5; // Set TWIE (TWI Interrupt enable), TWEN (TWI Enable), TWEA (TWI Enable Acknowledgement), TWINT (Clear TWINT flag by writing a 1)
 
-	sei();
+	#ifndef FRAMAC_SKIP
+		sei();
+	#endif
 	return;
 }
 
@@ -1937,10 +1953,14 @@ static void i2cMessageLoop() {
 					Fetch fault pins with interrupts disabled to prevent
 					race between reading and resetting of fault state pins.
 				*/
-				cli();
+				#ifndef FRAMAC_SKIP
+					cli();
+				#endif
 				i2cBuffer_TX[i2cBuffer_TX_Head] = stateFault;
 				stateFault = 0; // Reset fault pins after readout
-				sei();
+				#ifndef FRAMAC_SKIP
+					sei();
+				#endif
 
 				i2cBuffer_TX_Head = (i2cBuffer_TX_Head + 1) % STEPPER_I2C_BUFFERSIZE_RX;
 			}
@@ -2030,25 +2050,27 @@ static void i2cMessageLoop() {
 				/* Done */
 			}
 			break;
-		case i2cCmd_Queue_MoveToAbsolute:
-			{
-				if(rcvBytes < 2+4) {
-					return; /* Command not fully received */
+		#ifdef ENABLE_ABSOLUTEPOSITION
+			case i2cCmd_Queue_MoveToAbsolute:
+				{
+					if(rcvBytes < 2+4) {
+						return; /* Command not fully received */
+					}
+
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					double stepAccelDecel = i2cRXDouble();
+
+					if(channel >= 2) {
+						return; /* Ignore non existing channels */
+					}
+
+					stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
+					/* Done */
 				}
-
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				double stepAccelDecel = i2cRXDouble();
-
-				if(channel >= 2) {
-					return; /* Ignore non existing channels */
-				}
-
-				stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
-				/* Done */
-			}
-			break;
+				break;
+		#endif
 		case i2cCmd_Queue_ConstSpeedAccel:
 			{
 				if(rcvBytes < 2+4) {
@@ -2302,7 +2324,9 @@ unsigned long int millis() {
 		consistently BUT this is implementation dependent on the compiler
 	*/
 	uint8_t srOld = SREG;
-	cli();
+	#ifndef FRAMAC_SKIP
+		cli();
+	#endif
 	m = systemMillis;
 	SREG = srOld;
 
@@ -2318,7 +2342,9 @@ unsigned long int micros() {
 	unsigned long int overflowCounter;
 	unsigned long int timerCounter;
 
-	cli();
+	#ifndef FRAMAC_SKIP
+		cli();
+	#endif
 	overflowCounter = systemMonotonicOverflowCnt;
 	timerCounter = TCNT0;
 
@@ -2431,16 +2457,27 @@ void delayMicros(unsigned int microDelay) {
 		Busy waiting loop.
 		Takes 4 cycles. Micro Delay has been modified above
 	*/
-	/*@
-		assigns microDelay;
-		ensures microDelay == 0;
-	*/
-	__asm__ __volatile__ (
-		"lp: sbiw %0, 1\n"
-		"    brne lp"
-		: "=w" (microDelay)
-		: "0" (microDelay)
-	);
+	#ifndef FRAMAC_SKIP
+		/*@
+			assigns microDelay;
+			ensures microDelay == 0;
+		*/
+		__asm__ __volatile__ (
+			"lp: sbiw %0, 1\n"
+			"    brne lp"
+			: "=w" (microDelay)
+			: "0" (microDelay)
+		);
+	#else
+		/*@
+			loop assigns microDelay;
+			loop invariant 0 <= microDelay;
+		*/
+		while(microDelay > 0) {
+			microDelay = microDelay - 1;
+		}
+	#endif
+	/*@ ghost  */
 	return;
 }
 
@@ -2478,7 +2515,9 @@ void delayMicros(unsigned int microDelay) {
 	ensures UCSR0B == 0;
 */
 int main() {
-	cli();
+	#ifndef FRAMAC_SKIP
+		cli();
+	#endif
 
 	// Setup TIMER0 as our sysclk timer
 	// TCCR0A = 0x02;		/* CTC mode */
