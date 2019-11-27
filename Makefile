@@ -18,6 +18,10 @@ flash: avr_dualsteppers.hex
 	sudo chmod 666 $(FLASHDEV)
 	avrdude -v -p atmega328p -c arduino -P /dev/ttyU0 -b 57600 -D -U flash:w:avr_dualsteppers.hex:i
 
+framac: avr_dualsteppers.c
+
+	frama-c -wp -rte -wp-rte -wp-dynamic -wp-timeout 300 -cpp-extra-args="-I/usr/home/tsp/framaclib/ -DF_CPU=16000000L -D__AVR_ATmega328P__ -DFRAMAC_SKIP" avr_dualsteppers.c
+
 clean:
 
 	-rm *.bin
