@@ -1,3 +1,5 @@
 *.hex
 *.bin
 .frama-c
+*.json
+*.csv

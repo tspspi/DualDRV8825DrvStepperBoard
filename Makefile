@@ -20,7 +20,8 @@ flash: avr_dualsteppers.hex
 
 framac: avr_dualsteppers.c
 
-	frama-c -wp -rte -wp-rte -wp-dynamic -wp-timeout 300 -cpp-extra-args="-I/usr/home/tsp/framaclib/ -DF_CPU=16000000L -D__AVR_ATmega328P__ -DFRAMAC_SKIP" avr_dualsteppers.c
+	-rm framacreport.csv
+	frama-c -wp-verbose 0 -wp -rte -wp-rte -wp-dynamic -wp-timeout 300 -cpp-extra-args="-I/usr/home/tsp/framaclib/ -DF_CPU=16000000L -D__AVR_ATmega328P__ -DFRAMAC_SKIP" avr_dualsteppers.c -then -no-unicode -report -report-csv framacreport.csv
 
 clean:
 
