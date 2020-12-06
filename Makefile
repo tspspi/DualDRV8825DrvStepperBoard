@@ -16,7 +16,7 @@ avr_dualsteppers.hex: avr_dualsteppers.bin
 flash: avr_dualsteppers.hex
 
 	sudo chmod 666 $(FLASHDEV)
-	avrdude -v -p atmega328p -c arduino -P /dev/ttyU0 -b 57600 -D -U flash:w:avr_dualsteppers.hex:i
+	avrdude -v -p atmega328p -c avrisp -P /dev/ttyU0 -b 57600 -D -U flash:w:avr_dualsteppers.hex:i
 
 framac: avr_dualsteppers.c
 
