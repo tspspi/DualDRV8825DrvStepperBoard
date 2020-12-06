@@ -2198,25 +2198,27 @@ static void i2cMessageLoop() {
 				/* Done */
 			}
 			break;
-		case i2cCmd_Exec_MoveToAbsolute:
-			{
-				if(rcvBytes < 2+4) {
-					return; /* Command not fully received */
+		#ifdef ENABLE_ABSOLUTEPOSITION
+			case i2cCmd_Exec_MoveToAbsolute:
+				{
+					if(rcvBytes < 2+4) {
+						return; /* Command not fully received */
+					}
+
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
+					i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
+					double stepAccelDecel = i2cRXDouble();
+
+					if(channel >= 2) {
+						return; /* Ignore non existing channels */
+					}
+
+					stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
+					/* Done */
 				}
-
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				uint8_t channel = i2cBuffer_RX[i2cBuffer_RX_Tail];
-				i2cBuffer_RX_Tail = (i2cBuffer_RX_Tail + 1) % STEPPER_I2C_BUFFERSIZE_RX;
-				double stepAccelDecel = i2cRXDouble();
-
-				if(channel >= 2) {
-					return; /* Ignore non existing channels */
-				}
-
-				stepperPlanMovement_AccelerateStopToStopAbsolute(channel, stepAccelDecel, false);
-				/* Done */
-			}
-			break;
+				break;
+		#endif
 		case i2cCmd_Exec_Hold:
 			{
 				if(rcvBytes < 2) {
